@@ -4,11 +4,15 @@
     "DISABLE_TELEMETRY": "1"
   },
   "model": "opus[1m]",
+  "allowManagedHooksOnly": true,
+  "disableSideloadFlags": true,
   "sandbox": {
     "enabled": true,
     "failIfUnavailable": true,
     "allowUnsandboxedCommands": false,
     "network": {
+      "strictAllowlist": true,
+      "allowManagedDomainsOnly": true,
       "allowedDomains": [
         "claude.ai",
         "*.claude.ai",
@@ -21,7 +25,34 @@
         "github.io",
         "*.github.io",
         "githubusercontent.com",
-        "*.githubusercontent.com"
+        "*.githubusercontent.com",
+        "deb.debian.org",
+        "security.debian.org",
+        "pypi.org",
+        "files.pythonhosted.org",
+        "registry.npmjs.org",
+        "registry.yarnpkg.com",
+        "nodejs.org",
+        "cmake.org",
+        "crates.io",
+        "static.crates.io",
+        "index.crates.io",
+        "static.rust-lang.org",
+        "proxy.golang.org",
+        "sum.golang.org",
+        "gitlab.com",
+        "center.conan.io",
+        "registry-1.docker.io",
+        "auth.docker.io",
+        "production.cloudflare.docker.com",
+        "ghcr.io",
+        "quay.io",
+        "*.quay.io",
+        "rfc-editor.org",
+        "www.rfc-editor.org",
+        "httpwg.org",
+        "datatracker.ietf.org",
+        "developer.mozilla.org"
       ]
     }
   },

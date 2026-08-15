@@ -30,7 +30,12 @@ What it protects against
   and `TasksMax=1024` (bwrap itself has no cgroup support), and `/tmp` is a
   tmpfs capped at 2 GiB.
 - On top of the bwrap layer, Claude Code's own inner sandbox is enabled with
-  `failIfUnavailable: true` and a network domain allowlist — defence in depth.
+  `failIfUnavailable: true` and a strict network domain allowlist — defence in
+  depth. `strictAllowlist` means a non-listed domain is denied outright (no
+  approval prompt a user could reflexively accept), `allowManagedDomainsOnly`
+  means domain rules added from project settings are ignored, and
+  `allowManagedHooksOnly` / `disableSideloadFlags` block hooks and sideloaded
+  plugins/agents from any scope a session can write to.
 
 Requirements
 ------------
@@ -101,7 +106,10 @@ sandbox — deliberately *not* all of `~/.local`, which would expose keyrings an
 other app data under `~/.local/share`).
 
 Network configuration: edit `claude-settings/settings.json` on the host to change
-the allowed domains — by design this cannot be done from inside a session.
+the allowed domains — by design this cannot be done from inside a session. The
+list is strict: a domain that is not on it is denied with no runtime prompt, so
+`npm install` / `pip install` against a registry you have not listed will simply
+fail until you add it on the host and relaunch.
 
 Constraints and limits
 ----------------------

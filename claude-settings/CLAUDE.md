@@ -19,6 +19,16 @@ Answers
 - Say plainly when something is unverified or you're unsure. Don't guess at flags,
   API shapes, or config keys — check them, or say you didn't.
 
+Sandbox
+-------
+
+- You run in a sandbox where shell commands can only reach the domains listed in
+  `sandbox.network.allowedDomains`; anything else is denied with no prompt, and
+  usually surfaces as a plain connection failure.
+- If a command fails and the host isn't on that list, don't retry, switch
+  mirrors, or work around it: report the exact domain to me so I can add it to
+  `claude-settings/settings.json` on the host and relaunch.
+
 Code
 ----
  
