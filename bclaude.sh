@@ -82,7 +82,9 @@ exec systemd-run --user --scope -q \
         `# Without this you inherit SSH_AUTH_SOCK, GITHUB_TOKEN, AWS_*, DISPLAY...` \
         --clearenv \
         --setenv HOME "$HOME" \
-        --setenv PATH "$HOME/.local/bin":/usr/local/bin:/usr/bin:/usr/sbin:/bin:/sbin \
+        `# CLAUDE_BIN's own dir first: with an nvm install, node sits next to` \
+        `# claude and the env-node shebang needs it on PATH.` \
+        --setenv PATH "$(dirname "$CLAUDE_BIN")":"$HOME/.local/bin":/usr/local/bin:/usr/bin:/usr/sbin:/bin:/sbin \
         --setenv TERM "${TERM:-xterm-256color}" \
         --setenv LANG "${LANG:-C.UTF-8}" \
         --setenv USER "${USER:-$(id -un)}" \
@@ -116,10 +118,9 @@ exec systemd-run --user --scope -q \
         `# The sandbox gets its own real home directory. Persists across runs, so` \
         `# ~/.claude.json (OAuth session, preferences, per-project trust) survives.` \
         --bind "$SANDBOX_HOME" "$HOME" \
-        `# Bind the main CLAUDE.md manually so it can be edited in the session if needed.` \
-        `# Note that we could just put the file in $SANDBOX_HOME, but it is clearer to` \
-        `# have it at the root of the repository` \
-        --bind "$CLAUDE_SETTINGS_PATH/CLAUDE.md" "$HOME/.claude/CLAUDE.md" \
+        `# Read-only: CLAUDE.md auto-loads into every session, so writable it would` \
+        `# be a persistent prompt-injection channel. Edit it from the host instead.` \
+        --ro-bind "$CLAUDE_SETTINGS_PATH/CLAUDE.md" "$HOME/.claude/CLAUDE.md" \
         \
         `# Sources resolve on the HOST, so these read from your real home while` \
         `# landing inside the sandbox home.` \
@@ -136,11 +137,17 @@ exec systemd-run --user --scope -q \
         `# nothing outranks managed.` \
         --ro-bind "$CLAUDE_SETTINGS_PATH/settings.json" /etc/claude-code/managed-settings.json \
         `# Mask as empty tmpfs so a session can't plant agents/commands/hooks/` \
-        `# skills that would auto-load into every future run (anti-persistence).` \
+        `# skills/plugins that auto-load into every future run (anti-persistence).` \
         --tmpfs "$HOME/.claude/agents" \
         --tmpfs "$HOME/.claude/commands" \
         --tmpfs "$HOME/.claude/hooks" \
         --tmpfs "$HOME/.claude/skills" \
+        --tmpfs "$HOME/.claude/plugins" \
+        `# Same attack via shell rc files, sourced by future sessions' shell` \
+        `# snapshots: shadow them with /dev/null so they can't be created either.` \
+        --ro-bind /dev/null "$HOME/.bashrc" \
+        --ro-bind /dev/null "$HOME/.bash_profile" \
+        --ro-bind /dev/null "$HOME/.profile" \
         \
         `# ---- the project: the only genuinely writable place -------------` \
         --bind "$PROJECT_DIR" "$PROJECT_DIR" \

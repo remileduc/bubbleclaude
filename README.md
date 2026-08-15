@@ -23,9 +23,10 @@ What it protects against
   therefore not override the sandbox config either. And if this repo sits inside
   `PROJECT_DIR`, it is remounted read-only, so the agent cannot reach the source
   of `bclaude.sh` or `settings.json` through the writable project mount.
-- Cross-session persistence: `~/.claude/agents`, `commands`, `hooks` and `skills`
-  inside the sandbox are tmpfs, so a prompt-injected session cannot plant
-  instructions that auto-load into future sessions.
+- Cross-session persistence: `~/.claude/agents`, `commands`, `hooks`, `skills`
+  and `plugins` inside the sandbox are tmpfs, and the shell rc files (`.bashrc`,
+  `.bash_profile`, `.profile`) are shadowed by `/dev/null`, so a prompt-injected
+  session cannot plant code or instructions that auto-load into future sessions.
 - Runaway resource use: the sandbox runs in a systemd scope with `MemoryMax=8G`
   and `TasksMax=1024` (bwrap itself has no cgroup support), and `/tmp` is a
   tmpfs capped at 2 GiB.
@@ -96,7 +97,7 @@ Layout
 | `bclaude.sh`                    | The whole tool: resolves `claude` on the host, updates it, `exec bwrap`  |
 | `claude-home/`                  | Bound over `$HOME`; the only persistent state (OAuth, prefs, history)    |
 | `claude-settings/settings.json` | Bound read-only twice: user settings and top-precedence managed settings |
-| `claude-settings/CLAUDE.md`     | Global instructions, bound read-write so they can be edited in-session   |
+| `claude-settings/CLAUDE.md`     | Global instructions, bound read-only; edit from the host                 |
 | `projects/`                     | Placeholder mount point; `PROJECT_DIR` is bound over it                  |
 
 A few things are read-only bound *from your real home* for convenience:
@@ -133,9 +134,9 @@ Constraints and limits
 - **Minimal `/etc`.** Only DNS, TLS certificates, passwd/group and timezone are
   bound. Tools that expect other host config under `/etc` won't find it.
 - **This repo is read-only inside the sandbox** (when it lives under
-  `PROJECT_DIR`) — by design, so the agent cannot rewrite its own cage. To work
-  on bubbleclaude itself, edit from outside the sandbox. Exception: the global
-  `CLAUDE.md` stays editable in-session through its own bind at `~/.claude/`.
+  `PROJECT_DIR`) — by design, so the agent cannot rewrite its own cage. That
+  includes the global `CLAUDE.md`: instructions that auto-load into every
+  session are policy, and policy is edited from outside the sandbox.
 - **Fixed limits.** 8 GiB memory, 1024 tasks, 2 GiB `/tmp` — enough for normal
   agent work; raise them in the script if a big build needs more. The hostname
   inside reads `bubbleclaude`.

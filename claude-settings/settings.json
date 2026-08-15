@@ -1,6 +1,6 @@
 {
   "env": {
-    "CLAUDE_CODE_ENABLE_TELEMETRY": "0",
+    "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
     "DISABLE_TELEMETRY": "1"
   },
   "model": "opus[1m]",
