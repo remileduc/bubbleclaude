@@ -1,0 +1,33 @@
+{
+  "env": {
+    "CLAUDE_CODE_ENABLE_TELEMETRY": "0",
+    "DISABLE_TELEMETRY": "1"
+  },
+  "model": "opus[1m]",
+  "sandbox": {
+    "enabled": true,
+    "failIfUnavailable": true,
+    "allowUnsandboxedCommands": false,
+    "network": {
+      "allowedDomains": [
+        "claude.ai",
+        "*.claude.ai",
+        "claude.com",
+        "*.claude.com",
+        "nordvpn.com",
+        "api.nordvpn.com",
+        "github.com",
+        "*.github.com",
+        "github.io",
+        "*.github.io",
+        "githubusercontent.com",
+        "*.githubusercontent.com"
+      ]
+    }
+  },
+  "awaySummaryEnabled": false,
+  "companyAnnouncements": [
+    "Best AI companion evaaar!"
+  ],
+  "theme": "dark"
+}

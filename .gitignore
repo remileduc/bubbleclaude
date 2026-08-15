@@ -1,0 +1,11 @@
+# projects folder
+projects/*
+!projects/README.md
+
+# fake claude home folder
+claude-home/*
+!claude-home/README.md
+
+# claude stuff
+/.claude/
+/CLAUDE.md
