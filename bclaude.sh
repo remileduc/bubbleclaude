@@ -13,7 +13,9 @@
 
 set -eufo pipefail
 
-BCLAUDE_PATH="$(dirname "$0")"
+# readlink -f: $0 may be a symlink (e.g. ~/.local/bin/bclaude), and the binds
+# below must resolve relative to the real repo, not the symlink's directory.
+BCLAUDE_PATH="$(dirname "$(readlink -f "$0")")"
 REAL_HOME="$HOME"
 
 # Directory where your projects belong, this is the directory where Claude can read and write
@@ -43,8 +45,16 @@ for dir in "$BCLAUDE_PATH" "$CLAUDE_SETTINGS_PATH"; do
     esac
 done
 
+# bwrap silently falls back to / when the launch cwd is not bound inside the
+# sandbox; pin the start directory to the project instead.
+case "$(realpath "$PWD")" in
+    "$PROJECT_REAL"|"$PROJECT_REAL"/*) SANDBOX_CWD="$PWD" ;;
+    *)  SANDBOX_CWD="$PROJECT_DIR"
+        echo "cwd is outside PROJECT_DIR, starting in $PROJECT_DIR" >&2 ;;
+esac
+
 # update claude as it can't update itself in the sandbox
-$CLAUDE_BIN update || echo "warning: update failed, launching current version" >&2
+"$CLAUDE_BIN" update || echo "warning: update failed, launching current version" >&2
 
 exec systemd-run --user --scope -q \
     -p MemoryMax=8G -p TasksMax=1024 \
@@ -125,7 +135,8 @@ exec systemd-run --user --scope -q \
         `# a writable project .claude/settings.json can outrank user settings, but` \
         `# nothing outranks managed.` \
         --ro-bind "$CLAUDE_SETTINGS_PATH/settings.json" /etc/claude-code/managed-settings.json \
-        `# Claude folders, uncomment if you use them.` \
+        `# Mask as empty tmpfs so a session can't plant agents/commands/hooks/` \
+        `# skills that would auto-load into every future run (anti-persistence).` \
         --tmpfs "$HOME/.claude/agents" \
         --tmpfs "$HOME/.claude/commands" \
         --tmpfs "$HOME/.claude/hooks" \
@@ -135,5 +146,6 @@ exec systemd-run --user --scope -q \
         --bind "$PROJECT_DIR" "$PROJECT_DIR" \
         `# Later mounts stack over earlier ones: mask the repo read-only (see top).` \
         "${MASK_ARGS[@]}" \
+        --chdir "$SANDBOX_CWD" \
         \
         "$CLAUDE_BIN" "$@"
