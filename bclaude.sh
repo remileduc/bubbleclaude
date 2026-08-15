@@ -34,14 +34,21 @@ CLAUDE_BIN="$(command -v claude)" || { echo "claude not found in PATH" >&2; exit
 
 [ -d "$PROJECT_DIR" ] || { echo "no such project dir: $PROJECT_DIR" >&2; exit 1; }
 
-# Remount the repo/settings read-only when they sit inside PROJECT_DIR: otherwise
-# the agent could edit bclaude.sh or settings.json and widen its own next launch.
+# Remount repo and settings read-only when inside PROJECT_DIR: otherwise the
+# agent edits them via the project mount and widens its own next launch. Both
+# checked: the ro-binds at ~/.claude protect the view, not a repointed source.
 MASK_ARGS=()
 PROJECT_REAL="$(realpath "$PROJECT_DIR")"
 for dir in "$BCLAUDE_PATH" "$CLAUDE_SETTINGS_PATH"; do
     real="$(realpath "$dir")"
     case "$real" in
-        "$PROJECT_REAL"/*) MASK_ARGS+=(--ro-bind "$real" "$PROJECT_DIR/${real#"$PROJECT_REAL"/}") ;;
+        "$PROJECT_REAL")
+            # Equality would leave it writable (or the whole project useless if
+            # masked): work on bubbleclaude itself from outside the sandbox.
+            echo "refusing: PROJECT_DIR is $dir itself" >&2
+            exit 1 ;;
+        "$PROJECT_REAL"/*)
+            MASK_ARGS+=(--ro-bind "$real" "$PROJECT_DIR/${real#"$PROJECT_REAL"/}") ;;
     esac
 done
 

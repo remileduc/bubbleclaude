@@ -136,7 +136,8 @@ Constraints and limits
 - **This repo is read-only inside the sandbox** (when it lives under
   `PROJECT_DIR`) — by design, so the agent cannot rewrite its own cage. That
   includes the global `CLAUDE.md`: instructions that auto-load into every
-  session are policy, and policy is edited from outside the sandbox.
+  session are policy, and policy is edited from outside the sandbox. Setting
+  `PROJECT_DIR` to the repo itself is refused at launch for the same reason.
 - **Fixed limits.** 8 GiB memory, 1024 tasks, 2 GiB `/tmp` — enough for normal
   agent work; raise them in the script if a big build needs more. The hostname
   inside reads `bubbleclaude`.
