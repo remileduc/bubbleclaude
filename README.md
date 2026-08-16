@@ -25,8 +25,9 @@ What it protects against
   of `bclaude.sh` or `settings.json` through the writable project mount.
 - Cross-session persistence: `~/.claude/agents`, `commands`, `hooks`, `skills`
   and `plugins` inside the sandbox are tmpfs, and the shell rc files (`.bashrc`,
-  `.bash_profile`, `.profile`) are shadowed by `/dev/null`, so a prompt-injected
-  session cannot plant code or instructions that auto-load into future sessions.
+  `.bash_profile`, `.profile`) are shadowed by a read-only empty file, so a
+  prompt-injected session cannot plant code or instructions that auto-load into
+  future sessions.
 - Runaway resource use: the sandbox runs in a systemd scope with `MemoryMax=8G`
   and `TasksMax=1024` (bwrap itself has no cgroup support), and `/tmp` is a
   tmpfs capped at 2 GiB.

@@ -151,10 +151,12 @@ exec systemd-run --user --scope -q \
         --tmpfs "$HOME/.claude/skills" \
         --tmpfs "$HOME/.claude/plugins" \
         `# Same attack via shell rc files, sourced by future sessions' shell` \
-        `# snapshots: shadow them with /dev/null so they can't be created either.` \
-        --ro-bind /dev/null "$HOME/.bashrc" \
-        --ro-bind /dev/null "$HOME/.bash_profile" \
-        --ro-bind /dev/null "$HOME/.profile" \
+        `# snapshots: shadow them with a read-only empty file, and rm-and-replace` \
+        `# fails too (mount point). NOT /dev/null: bwrap mounts binds nodev, so a` \
+        `# device node there is unopenable and breaks shell-snapshot sourcing.` \
+        --ro-bind "$CLAUDE_SETTINGS_PATH/empty" "$HOME/.bashrc" \
+        --ro-bind "$CLAUDE_SETTINGS_PATH/empty" "$HOME/.bash_profile" \
+        --ro-bind "$CLAUDE_SETTINGS_PATH/empty" "$HOME/.profile" \
         \
         `# ---- the project: the only genuinely writable place -------------` \
         --bind "$PROJECT_DIR" "$PROJECT_DIR" \
