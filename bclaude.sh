@@ -38,6 +38,7 @@ CLAUDE_BIN="$(command -v claude)" || { echo "claude not found in PATH" >&2; exit
 # agent edits them via the project mount and widens its own next launch. Both
 # checked: the ro-binds at ~/.claude protect the view, not a repointed source.
 MASK_ARGS=()
+RO_PATHS=()
 PROJECT_REAL="$(realpath "$PROJECT_DIR")"
 for dir in "$BCLAUDE_PATH" "$CLAUDE_SETTINGS_PATH"; do
     real="$(realpath "$dir")"
@@ -48,7 +49,8 @@ for dir in "$BCLAUDE_PATH" "$CLAUDE_SETTINGS_PATH"; do
             echo "refusing: PROJECT_DIR is $dir itself" >&2
             exit 1 ;;
         "$PROJECT_REAL"/*)
-            MASK_ARGS+=(--ro-bind "$real" "$PROJECT_DIR/${real#"$PROJECT_REAL"/}") ;;
+            MASK_ARGS+=(--ro-bind "$real" "$PROJECT_DIR/${real#"$PROJECT_REAL"/}")
+            RO_PATHS+=("$real") ;;
     esac
 done
 
@@ -59,6 +61,18 @@ case "$(realpath "$PWD")" in
     *)  SANDBOX_CWD="$PROJECT_DIR"
         echo "cwd is outside PROJECT_DIR, starting in $PROJECT_DIR" >&2 ;;
 esac
+
+# Refuse early rather than let Claude start and fail on its first write: it
+# needs "$PWD/.claude" for permissions and trust state before editing anything.
+for ro in "${RO_PATHS[@]}"; do
+    case "$(realpath "$SANDBOX_CWD")" in
+        "$ro"|"$ro"/*)
+            echo "refusing: $SANDBOX_CWD is mounted read-only in the sandbox." >&2
+            echo "Claude cannot write .claude/ state or edit files there. Edit bubbleclaude" >&2
+            echo "from the host, or cd to another directory under $PROJECT_DIR." >&2
+            exit 1 ;;
+    esac
+done
 
 # update claude as it can't update itself in the sandbox
 "$CLAUDE_BIN" update || echo "warning: update failed, launching current version" >&2
