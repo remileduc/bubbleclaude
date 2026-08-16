@@ -24,14 +24,16 @@ What it protects against
   sit *inside* the directory you launched from, it is remounted read-only, so the
   agent cannot reach the source of `bclaude.sh` or `settings.json` through the
   writable project mount.
-- Cross-session persistence: `~/.claude/agents`, `commands`, `hooks`, `skills`
-  and `plugins` inside the sandbox are tmpfs, and the shell rc files (`.bashrc`,
-  `.bash_profile`, `.profile`) are shadowed by a read-only empty file, so a
-  prompt-injected session cannot plant code or instructions that auto-load into
-  future sessions.
+- Cross-session persistence *in the sandbox home*: `~/.claude/agents`,
+  `commands`, `hooks`, `skills` and `plugins` inside the sandbox are tmpfs, and
+  the shell rc files (`.bashrc`, `.bash_profile`, `.profile`) are shadowed by a
+  read-only empty file, so a prompt-injected session cannot plant code or
+  instructions that auto-load into future sessions. This does **not** extend to
+  the project directory, which is writable by definition — see "Constraints and
+  limits".
 - Runaway resource use: the sandbox runs in a systemd scope with `MemoryMax=8G`
   and `TasksMax=1024` (bwrap itself has no cgroup support), and `/tmp` is a
-  tmpfs capped at 2 GiB.
+  tmpfs capped at 2 GiB. CPU and disk are *not* capped.
 - On top of the bwrap layer, Claude Code's own inner sandbox is enabled with
   `failIfUnavailable: true` and a strict network domain allowlist — defence in
   depth. `strictAllowlist` means a non-listed domain is denied outright (no
@@ -139,6 +141,30 @@ Then ask Claude to run the same command inside the session. A **different** inod
 means the sandbox is in effect. A **matching** inode means it is not, regardless
 of what the configuration says.
 
+Security audit
+--------------
+
+The sandbox was audited from inside a live session on 2026-08-16, eleven
+boundaries probed with non-destructive checks:
+
+- [`pentest-prompt.md`](pentest-prompt.md) — the prompt used to drive the audit.
+- [`pentest-report.md`](pentest-report.md) — the resulting report: evidence,
+  classification and severity per boundary.
+
+Nine boundaries came out contained. The one violation is partial and scoped to
+the project directory: a project-level `CLAUDE.md`, `CLAUDE.local.md` or
+`AGENTS.md` is not masked, so a prompt-injected session can plant instructions
+that auto-load into later sessions *of that project*. That finding, the
+unconfined file-writing tools, the readable session token and the missing CPU
+and disk quotas are all recorded under "Constraints and limits" below. The
+proposed fixes were reviewed and deliberately declined; the report records each
+trade-off so the decision stays revisitable.
+
+The audit also contradicted this README on two points, and the text above has
+been corrected accordingly: the network namespace is private in practice rather
+than shared, and egress is blocked by an empty routing table before the proxy
+allowlist ever applies — there is no IP-literal or raw-socket bypass.
+
 Layout
 ------
 
@@ -164,13 +190,16 @@ fail until you add it on the host and relaunch.
 Constraints and limits
 ----------------------
 
-- **Network is shared, not isolated.** The sandbox re-shares the host network
-  namespace; the domain allowlist is enforced by Claude Code's inner sandbox, not
-  by bwrap. Sharing the network namespace also shares abstract-namespace Unix
-  sockets — **under X11 that includes the X server**, and anything that can reach
-  X11 can keylog the session. On Wayland the compositor socket is a file in
-  `XDG_RUNTIME_DIR`, which is not bound, so exposure is much smaller. Check with
-  `echo $XDG_SESSION_TYPE`.
+- **Network isolation comes from the inner sandbox, not from bwrap.** `bclaude.sh`
+  re-shares the host network namespace, which also shares abstract-namespace Unix
+  sockets — **under X11 that would include the X server**, and anything that can
+  reach X11 can keylog the session. The audit found that Claude Code's inner
+  sandbox neutralises this: each command runs in a private netns with only
+  loopback and no routes, and `AF_UNIX` sockets are refused outright. So the
+  keylogging vector is real for the bwrap layer alone and closed in practice —
+  but it reopens in full if the inner sandbox is ever disabled. Wayland is safer
+  either way (its socket is a file in `XDG_RUNTIME_DIR`, which is not bound);
+  check with `echo $XDG_SESSION_TYPE`.
 - **No SSH agent inside.** `SSH_AUTH_SOCK` is not passed through, so `git` over
   SSH won't work in the sandbox; use HTTPS remotes (github.com is in the network
   allowlist). Nothing authenticates you either way — commit and push from the
@@ -179,6 +208,26 @@ Constraints and limits
   be the working directory. Anything Claude needs to read must live under it or
   under one of the bound paths; everything else does not exist from its point of
   view. To work on two projects, run two sandboxes.
+- **The project's own memory files are writable.** `CLAUDE.md`,
+  `CLAUDE.local.md`, `AGENTS.md` and `.claude/` in the launch directory
+  auto-load into every later session *of that project*, and nothing masks them,
+  so a prompt-injected session can leave instructions for the next one. Blast
+  radius is the one directory you already gave write access to, but a memory
+  file is a silent instruction channel — read those diffs, don't skim them. The
+  trade-off is deliberate: masking them would stop Claude keeping its own
+  project notes.
+- **The file-writing tools may not be confined by the mounts.** Bash sees all of
+  `$HOME` as read-only, but the Write tool created its temp file *inside*
+  `~/.claude/` before the final rename failed on a read-only bind. Names under
+  `~/.claude` that are neither bound nor tmpfs-masked (`output-styles/`,
+  `rules/`, `settings.local.json`...) may therefore be writable through those
+  tools and persist across sessions. Mechanism observed, endpoint deliberately
+  not tested — see the audit report.
+- **The session's own token is readable inside the sandbox.**
+  `~/.claude/.credentials.json` and `~/.claude.json` can be read by any command
+  the session runs, and the allowlist includes hosts that can receive data. The
+  token is scoped to the sandbox's Claude session, not to your host account —
+  but treat it as compromised if the session is.
 - **Mount points materialise in `claude-home/`.** When the project lives under
   your real home, bwrap creates the matching empty directory chain inside the
   sandbox home (`~/work/myproject` → `claude-home/work/myproject`). Harmless
@@ -195,8 +244,12 @@ Constraints and limits
   launching *from* the repo, which trades that away deliberately and says so
   (see "Working on bubbleclaude itself") — except for `claude-home/`, which is
   read-only from the project side in every configuration.
-- **Fixed limits.** 8 GiB memory, 1024 tasks, 2 GiB `/tmp` — enough for normal
-  agent work; raise them in the script if a big build needs more. The hostname
-  inside reads `bubbleclaude`.
+- **Fixed limits, with gaps.** 8 GiB memory, 1024 tasks, 2 GiB `/tmp` — enough
+  for normal agent work; raise them in the script if a big build needs more.
+  There is **no CPU quota and no disk quota**, so a runaway session can pin
+  every core and fill the host filesystem. The cgroup caps also cannot be
+  verified from inside (no cgroupfs in the namespace); check them on the host
+  with `systemctl --user show` on the scope. The hostname inside reads
+  `bubbleclaude`.
 - **Same user, same kernel.** bwrap is a namespace sandbox, not a VM: a kernel
   exploit or a hole in the shared network namespace is out of scope.
