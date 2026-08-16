@@ -1,10 +1,27 @@
 #!/usr/bin/env bash
+
+# MIT License
+#
+# bubbleclaude: Run Claude Code inside a bubblewrap (bwrap) sandbox.
+# Copyright (c) 2026 Rémi Ducceschi
+#
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to deal
+# in the Software without restriction, including without limitation the rights
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
+#
+# The above copyright notice and this permission notice shall be included in all
+# copies or substantial portions of the Software.
+
 # Launch Claude Code inside a bubblewrap sandbox.
 #
 # Allowlist model: nothing exists inside the sandbox unless bound in below.
 # Paths not listed are ABSENT, not merely denied
 #
-# Usage:  ./bclaude.sh [claude args...]
+# Usage:  cd /path/to/project && bclaude.sh [claude args...]
+# The launch directory is the project, and the only writable place inside.
 #
 # Verify it is actually working, from your normal shell:
 #     readlink /proc/self/ns/mnt
@@ -15,15 +32,13 @@ set -eufo pipefail
 
 # readlink -f: $0 may be a symlink (e.g. ~/.local/bin/bclaude), and the binds
 # below must resolve relative to the real repo, not the symlink's directory.
-BCLAUDE_PATH="$(dirname "$(readlink -f "$0")")"
-REAL_HOME="$HOME"
+BCLAUDE_PATH="$(realpath "$(dirname "$(readlink -f "$0")")")"
+REAL_HOME="$(realpath "$HOME")"
 
-# Directory where your projects belong, this is the directory where Claude can read and write
-PROJECT_DIR="${PROJECT_DIR:-$HOME/projects}"
 # This is the folder that will be mounted as the new home in the sandbox
-SANDBOX_HOME="${SANDBOX_HOME:-$BCLAUDE_PATH/claude-home}"
+SANDBOX_HOME="$(realpath -m "${SANDBOX_HOME:-$BCLAUDE_PATH/claude-home}")"
 # Path to the claude's settings.json and CLAUDE.md files to use in the sandbox (~/.claude/settings.json)
-CLAUDE_SETTINGS_PATH="$BCLAUDE_PATH/claude-settings/"
+CLAUDE_SETTINGS_PATH="$(realpath "$BCLAUDE_PATH/claude-settings")"
 
 mkdir -p "$SANDBOX_HOME/.claude"
 
@@ -32,47 +47,65 @@ mkdir -p "$SANDBOX_HOME/.claude"
 export PATH="$HOME/.local/bin:$PATH"
 CLAUDE_BIN="$(command -v claude)" || { echo "claude not found in PATH" >&2; exit 1; }
 
-[ -d "$PROJECT_DIR" ] || { echo "no such project dir: $PROJECT_DIR" >&2; exit 1; }
+# Canonical throughout: a symlinked launch path would not exist inside the
+# sandbox, and --chdir must land on the directory that was actually bound.
+PROJECT="$(realpath "$PWD")"
 
-# Remount repo and settings read-only when inside PROJECT_DIR: otherwise the
-# agent edits them via the project mount and widens its own next launch. Both
-# checked: the ro-binds at ~/.claude protect the view, not a repointed source.
-MASK_ARGS=()
-RO_PATHS=()
-PROJECT_REAL="$(realpath "$PROJECT_DIR")"
-for dir in "$BCLAUDE_PATH" "$CLAUDE_SETTINGS_PATH"; do
-    real="$(realpath "$dir")"
-    case "$real" in
-        "$PROJECT_REAL")
-            # Equality would leave it writable (or the whole project useless if
-            # masked): work on bubbleclaude itself from outside the sandbox.
-            echo "refusing: PROJECT_DIR is $dir itself" >&2
-            exit 1 ;;
-        "$PROJECT_REAL"/*)
-            MASK_ARGS+=(--ro-bind "$real" "$PROJECT_DIR/${real#"$PROJECT_REAL"/}")
-            RO_PATHS+=("$real") ;;
-    esac
-done
-
-# bwrap silently falls back to / when the launch cwd is not bound inside the
-# sandbox; pin the start directory to the project instead.
-case "$(realpath "$PWD")" in
-    "$PROJECT_REAL"|"$PROJECT_REAL"/*) SANDBOX_CWD="$PWD" ;;
-    *)  SANDBOX_CWD="$PROJECT_DIR"
-        echo "cwd is outside PROJECT_DIR, starting in $PROJECT_DIR" >&2 ;;
+# Binding the project over a parent of the real home would undo the sandbox
+# home: later mounts stack over earlier ones, so $HOME would resolve back to
+# your real files. Matched separately because "/" never matches "$PROJECT"/*.
+case "$PROJECT" in
+    /)  echo "refusing: / is not a project directory" >&2
+        exit 1 ;;
+    "$SANDBOX_HOME"|"$SANDBOX_HOME"/*)
+        echo "refusing: $PROJECT is inside the sandbox home ($SANDBOX_HOME)" >&2
+        echo "that is the session's own state, not a project." >&2
+        exit 1 ;;
+    "$REAL_HOME/.claude"|"$REAL_HOME/.claude"/*)
+        echo "refusing: you're running bclaude from $PROJECT" >&2
+        echo "Bro... WTF" >&2
+        exit 1 ;;
+esac
+case "$REAL_HOME" in
+    "$PROJECT"|"$PROJECT"/*)
+        echo "refusing: $PROJECT holds your real home directory" >&2
+        echo "cd into an actual project; the launch directory is bound writable." >&2
+        exit 1 ;;
 esac
 
-# Refuse early rather than let Claude start and fail on its first write: it
-# needs "$PWD/.claude" for permissions and trust state before editing anything.
-for ro in "${RO_PATHS[@]}"; do
-    case "$(realpath "$SANDBOX_CWD")" in
-        "$ro"|"$ro"/*)
-            echo "refusing: $SANDBOX_CWD is mounted read-only in the sandbox." >&2
-            echo "Claude cannot write .claude/ state or edit files there. Edit bubbleclaude" >&2
-            echo "from the host, or cd to another directory under $PROJECT_DIR." >&2
-            exit 1 ;;
+# Remount this repo read-only when it sits inside the project: otherwise the
+# agent edits bclaude.sh or settings.json through the project mount and widens
+# its own next launch. All three sources are checked: the ro-binds at
+# ~/.claude protect the view, not a repointed source.
+MASK_ARGS=()
+DEV_MODE=0
+case "$PROJECT" in
+    "$BCLAUDE_PATH"|"$BCLAUDE_PATH"/*) DEV_MODE=1 ;;
+esac
+# Dev mode keeps the repo writable so the session is useful, but never the
+# sandbox home: anything planted there auto-loads into every later session,
+# which is the one thing no warning can make safe.
+if [ "$DEV_MODE" -eq 1 ]; then
+    MASK_SOURCES=("$SANDBOX_HOME")
+else
+    MASK_SOURCES=("$BCLAUDE_PATH" "$CLAUDE_SETTINGS_PATH" "$SANDBOX_HOME")
+fi
+for real in "${MASK_SOURCES[@]}"; do
+    case "$real" in
+        "$PROJECT"/*) MASK_ARGS+=(--ro-bind "$real" "$real") ;;
     esac
 done
+
+if [ "$DEV_MODE" -eq 1 ]; then
+    cat >&2 <<'EOF'
+
+***    WARNING: THIS SESSION RUNS INSIDE THE BUBBLECLAUDE REPOSITORY.     ***
+***   THE REPO IS WRITABLE, SO CLAUDE CAN EDIT ITS OWN CAGE: CHANGES TO   ***
+***    bclaude.sh OR claude-settings/ TAKE EFFECT ON THE NEXT LAUNCH.     ***
+***   READ EVERY DIFF BEFORE YOU RELAUNCH. claude-home/ STAYS READ-ONLY.  ***
+
+EOF
+fi
 
 # update claude as it can't update itself in the sandbox
 "$CLAUDE_BIN" update || echo "warning: update failed, launching current version" >&2
@@ -146,6 +179,7 @@ exec systemd-run --user --scope -q \
         `# Sources resolve on the HOST, so these read from your real home while` \
         `# landing inside the sandbox home.` \
         --ro-bind-try "$REAL_HOME/.gitconfig" "$HOME/.gitconfig" \
+        --ro-bind-try "$REAL_HOME/.config/git/config" "$HOME/.config/git/config" \
         --ro-bind-try "$REAL_HOME/.local/bin"     "$HOME/.local/bin" \
         --ro-bind-try "$REAL_HOME/.local/share/claude"     "$HOME/.local/share/claude" \
         --ro-bind-try "$REAL_HOME/.nvm"       "$HOME/.nvm" \
@@ -173,9 +207,9 @@ exec systemd-run --user --scope -q \
         --ro-bind "$CLAUDE_SETTINGS_PATH/empty" "$HOME/.profile" \
         \
         `# ---- the project: the only genuinely writable place -------------` \
-        --bind "$PROJECT_DIR" "$PROJECT_DIR" \
+        --bind "$PROJECT" "$PROJECT" \
         `# Later mounts stack over earlier ones: mask the repo read-only (see top).` \
         "${MASK_ARGS[@]}" \
-        --chdir "$SANDBOX_CWD" \
+        --chdir "$PROJECT" \
         \
         "$CLAUDE_BIN" "$@"

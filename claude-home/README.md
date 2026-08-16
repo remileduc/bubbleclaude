@@ -20,9 +20,21 @@ exist in the repo to serve as a mount point, but its contents are personal secre
 (OAuth tokens!) and must never be committed.
 
 Note that some paths inside are overridden by the script at launch:
-`.claude/settings.json` is bound read-only from `../claude-settings/`, and
-`.claude/{agents,commands,hooks,skills}` are masked with throwaway tmpfs so a
-session cannot plant anything that auto-loads into future sessions.
+`.claude/settings.json` and `.claude/CLAUDE.md` are bound read-only from
+`../claude-settings/`, and `.claude/{agents,commands,hooks,skills,plugins}` are
+masked with throwaway tmpfs so a session cannot plant anything that auto-loads
+into future sessions.
+
+From the *project* side this folder is always read-only, including when you
+launch a session from inside the bubbleclaude repo to work on the tool itself:
+it is re-bound read-only over the writable project so a session cannot plant
+state that auto-loads into every later run. Launching from inside it is refused
+outright.
+
+You will also see empty directory trees appear here that mirror your projects
+(`work/myproject/`...). Those are mount points bwrap has to create when the launch
+directory lives under your real home; they are shadowed by the real bind at
+runtime and are safe to delete.
 
 Wipe this folder to factory-reset the sandboxed Claude (you will have to log in
 again).

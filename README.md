@@ -7,22 +7,23 @@ Run [Claude Code](https://claude.com/claude-code) inside a [bubblewrap](https://
 The sandbox uses an **allowlist model**: nothing exists inside the namespace unless
 it is bound in by `bclaude.sh`. Your real home directory, SSH keys, cloud
 credentials, and environment variables are not "denied" — they are simply *absent*.
-The only writable location is your projects directory.
+The only writable location is **the directory you launch from**.
 
 What it protects against
 -------------------------
 
-- Claude reading or exfiltrating anything outside the project directory
-  (`~/.ssh`, `~/.aws`, browser profiles, other repos...).
+- Claude reading or exfiltrating anything outside the launch directory
+  (`~/.ssh`, `~/.aws`, browser profiles, your other repos...).
 - Leaked secrets from the environment: the sandbox starts with `--clearenv`, so
   `SSH_AUTH_SOCK`, `GITHUB_TOKEN`, `AWS_*`, `DISPLAY` etc. never make it inside.
 - Claude rewriting its own security settings: `settings.json` is bound
   **read-only**, twice — at `~/.claude/settings.json` and at
   `/etc/claude-code/managed-settings.json`, the top of the settings precedence.
   A project-level `.claude/settings.json` (which outranks user settings) can
-  therefore not override the sandbox config either. And if this repo sits inside
-  `PROJECT_DIR`, it is remounted read-only, so the agent cannot reach the source
-  of `bclaude.sh` or `settings.json` through the writable project mount.
+  therefore not override the sandbox config either. And if this repo happens to
+  sit *inside* the directory you launched from, it is remounted read-only, so the
+  agent cannot reach the source of `bclaude.sh` or `settings.json` through the
+  writable project mount.
 - Cross-session persistence: `~/.claude/agents`, `commands`, `hooks`, `skills`
   and `plugins` inside the sandbox are tmpfs, and the shell rc files (`.bashrc`,
   `.bash_profile`, `.profile`) are shadowed by a read-only empty file, so a
@@ -52,14 +53,35 @@ Requirements
 Usage
 -----
 
+**The directory you launch from is the project.** It is bind-mounted at its real
+path and is the only writable location inside the sandbox.
+
 ```sh
-./bclaude.sh [claude args...]          # launch sandboxed Claude Code
-PROJECT_DIR=~/work ./bclaude.sh        # override the writable projects dir (default: ~/projects)
-SANDBOX_HOME=/path/home ./bclaude.sh   # override the fake home (default: ./claude-home)
+cd ~/work/myproject
+/path/to/bclaude.sh [claude args...]
 ```
 
-Any extra arguments are passed straight to `claude`, so `./bclaude.sh -p "..."`,
-`./bclaude.sh --resume`, etc. all work.
+Symlink it somewhere on your `PATH` so it works from anywhere — the script
+resolves its own real location, so the binds still point at the repo:
+
+```sh
+ln -s ~/projects/bubbleclaude/bclaude.sh ~/.local/bin/bclaude
+cd ~/work/myproject && bclaude
+```
+
+Any extra arguments are passed straight to `claude`, so `bclaude -p "..."`,
+`bclaude --resume`, etc. all work. One environment override is available:
+
+```sh
+SANDBOX_HOME=/path/home bclaude   # override the fake home (default: <repo>/claude-home)
+```
+
+Three launch directories are refused outright:
+
+- `/`, and your real home directory or any parent of it (`/home`, `~`) — binding
+  them would stack over the sandbox home and hand the session your real files.
+- `claude-home/` or anything under it — that is the session's own state, not a
+  project.
 
 Before launching, the script runs `claude update` **on the host**: the sandbox is
 read-only everywhere the updater would write, so Claude cannot update itself from
@@ -77,6 +99,33 @@ deliberately not exposed to the sandbox.
 Everything you set up is stored in `claude-home/` and **persists across runs** —
 OAuth session, preferences, per-project trust, history. You only go through
 onboarding once.
+
+### Working on bubbleclaude itself
+
+Launching from inside this repo is allowed, and it is the one case where the
+sandbox does *not* protect itself: the repo is the project, so it is writable.
+The script prints a loud uppercase warning and continues.
+
+```
+*** WARNING: THIS SESSION RUNS INSIDE THE BUBBLECLAUDE REPOSITORY.        ***
+*** THE REPO IS WRITABLE, SO CLAUDE CAN EDIT ITS OWN CAGE: CHANGES TO     ***
+*** bclaude.sh OR claude-settings/ TAKE EFFECT ON THE NEXT LAUNCH.        ***
+*** READ EVERY DIFF BEFORE YOU RELAUNCH. claude-home/ STAYS READ-ONLY.    ***
+```
+
+Take it seriously. In this mode a session can edit the mount layout, widen
+`sandbox.network.allowedDomains`, or rewrite the auto-loaded `CLAUDE.md`. **Read
+every diff before you relaunch** — a change you accept here applies to every
+sandbox afterwards.
+
+`claude-home/` is the exception and stays read-only even here: it is re-bound
+read-only on top of the writable repo, so a session cannot plant state that
+auto-loads into every later run. The same directory is still writable at `$HOME`,
+where it belongs — one source, two mounts, different permissions.
+
+Launching from any *other* directory that happens to contain this repo (say
+`~/projects`, with the repo at `~/projects/bubbleclaude`) is safe: the repo and
+`claude-settings/` are remounted read-only inside the writable project.
 
 ### Verifying the sandbox actually applies
 
@@ -99,7 +148,6 @@ Layout
 | `claude-home/`                  | Bound over `$HOME`; the only persistent state (OAuth, prefs, history)    |
 | `claude-settings/settings.json` | Bound read-only twice: user settings and top-precedence managed settings |
 | `claude-settings/CLAUDE.md`     | Global instructions, bound read-only; edit from the host                 |
-| `projects/`                     | Placeholder mount point; `PROJECT_DIR` is bound over it                  |
 
 A few things are read-only bound *from your real home* for convenience:
 `~/.gitconfig`, `~/.local/bin`, `~/.local/share/claude`, and `~/.nvm` (the latter
@@ -125,20 +173,28 @@ Constraints and limits
   `echo $XDG_SESSION_TYPE`.
 - **No SSH agent inside.** `SSH_AUTH_SOCK` is not passed through, so `git` over
   SSH won't work in the sandbox; use HTTPS remotes (github.com is in the network
-  allowlist).
-- **Only `PROJECT_DIR` is writable.** Anything Claude needs to read must live
-  there or under one of the bound paths; everything else does not exist from its
-  point of view.
+  allowlist). Nothing authenticates you either way — commit and push from the
+  host.
+- **Only the launch directory is writable.** One project per session, and it must
+  be the working directory. Anything Claude needs to read must live under it or
+  under one of the bound paths; everything else does not exist from its point of
+  view. To work on two projects, run two sandboxes.
+- **Mount points materialise in `claude-home/`.** When the project lives under
+  your real home, bwrap creates the matching empty directory chain inside the
+  sandbox home (`~/work/myproject` → `claude-home/work/myproject`). Harmless
+  clutter, shadowed by the real bind at runtime.
 - **`--new-session` drops the controlling terminal** (TIOCSTI defence), at the
   cost of the process reporting "not a tty". If it ever breaks the interactive
   TUI, that flag is the trade-off to revisit.
 - **Minimal `/etc`.** Only DNS, TLS certificates, passwd/group and timezone are
   bound. Tools that expect other host config under `/etc` won't find it.
-- **This repo is read-only inside the sandbox** (when it lives under
-  `PROJECT_DIR`) — by design, so the agent cannot rewrite its own cage. That
-  includes the global `CLAUDE.md`: instructions that auto-load into every
-  session are policy, and policy is edited from outside the sandbox. Setting
-  `PROJECT_DIR` to the repo itself is refused at launch for the same reason.
+- **This repo is read-only inside the sandbox** whenever it is not the project
+  itself — by design, so the agent cannot rewrite its own cage. That includes the
+  global `CLAUDE.md`: instructions that auto-load into every session are policy,
+  and policy is edited from outside the sandbox. The single exception is
+  launching *from* the repo, which trades that away deliberately and says so
+  (see "Working on bubbleclaude itself") — except for `claude-home/`, which is
+  read-only from the project side in every configuration.
 - **Fixed limits.** 8 GiB memory, 1024 tasks, 2 GiB `/tmp` — enough for normal
   agent work; raise them in the script if a big build needs more. The hostname
   inside reads `bubbleclaude`.
