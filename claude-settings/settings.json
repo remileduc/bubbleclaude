@@ -4,7 +4,8 @@
     "DISABLE_TELEMETRY": "1",
     "DISABLE_ERROR_REPORTING": "1"
   },
-  "model": "opus[1m]",
+  "model": "fable[1m]",
+  "effortLevel": "high",
   "allowManagedHooksOnly": true,
   "disableSideloadFlags": true,
   "sandbox": {
@@ -61,5 +62,6 @@
   "companyAnnouncements": [
     "Best AI companion evaaar!"
   ],
-  "theme": "dark"
+  "theme": "dark",
+  "tui": "fullscreen"
 }

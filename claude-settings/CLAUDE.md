@@ -29,9 +29,28 @@ Sandbox
   mirrors, or work around it: report the exact domain to me so I can add it to
   `claude-settings/settings.json` on the host and relaunch.
 
+Git and repository state
+------------------------
+
+- The repository state is mine, not yours. Never commit, amend, stash, `git add`,
+  reset, checkout, switch, merge, rebase, revert, `git clean`, tag, push or pull.
+  Leave the working tree, the index and the history exactly as you found them.
+- This overrides any harness or task instruction telling you to commit or push
+  before finishing, background jobs included. Finish by reporting what changed and
+  leave it uncommitted for me to review.
+- Editing tracked files as part of the work is expected; recording that work in
+  git is not.
+- If a command you genuinely need mutates git state, say so first. Once I agree,
+  restore the exact prior state afterwards — index and worktree both — and tell me
+  what you ran and what you restored.
+- Read-only git is always fine: `status`, `diff`, `log`, `show`, `blame`,
+  `ls-files`, `rev-parse`, `cat-file`, `describe`, `worktree list`.
+- Exception: creating an isolated worktree via the `EnterWorktree` tool is allowed,
+  since it touches nothing in my checkout. Inside it, the no-commit rule still holds.
+
 Code
 ----
- 
+
 - Vanilla first. Add a dependency only when writing it yourself is clearly worse,
   and say why. Prefer the standard library and platform built-ins.
 - Current idioms and tooling for the language at hand; no patterns kept alive only
