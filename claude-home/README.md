@@ -21,8 +21,9 @@ exist in the repo to serve as a mount point, but its contents are personal secre
 
 Note that some paths inside are overridden by the script at launch:
 `.claude/settings.json` and `.claude/CLAUDE.md` are bound read-only from your
-real `~/.claude/`, and `.claude/{agents,commands,hooks,skills,plugins}` are
-masked with throwaway tmpfs so a session cannot plant anything that auto-loads
+real `~/.claude/`, and
+`.claude/{agents,commands,hooks,skills,plugins,rules,output-styles,workflows,themes}`
+are masked with throwaway tmpfs so a session cannot plant anything that auto-loads
 into future sessions.
 
 From the *project* side this folder is always read-only, including when you

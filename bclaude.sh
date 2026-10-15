@@ -32,13 +32,14 @@ USER_SETTINGS="$(realpath -m "$USER_CLAUDE_DIR/settings.json")"
 USER_CLAUDE_MD="$(realpath -m "$USER_CLAUDE_DIR/CLAUDE.md")"
 
 # Resolved on the HOST. An explicit CLAUDE_BIN (the VS Code wrapper) is not
-# updated: the extension ships its own copy.
+# updated: the extension ships its own copy. DISABLE_AUTOUPDATER is Claude's
+# own switch, honoured here too so `-p` one-shots skip the network round trip.
 export PATH="$HOME/.local/bin:$PATH"
-if [ -n "${CLAUDE_BIN:-}" ]; then
-    UPDATE=0
-else
+UPDATE=1
+[ -z "${CLAUDE_BIN:-}" ] || UPDATE=0
+case "${DISABLE_AUTOUPDATER:-}" in 1|[Tt][Rr][Uu][Ee]|[Yy][Ee][Ss]|[Oo][Nn]) UPDATE=0 ;; esac
+if [ -z "${CLAUDE_BIN:-}" ]; then
     CLAUDE_BIN="$(command -v claude)" || die "claude not found in PATH"
-    UPDATE=1
 fi
 # Dir as found, not resolved: an nvm symlink's node sits beside it. File
 # resolved: only that one file is bound, so it has to be the real one.
@@ -101,6 +102,10 @@ MASK_ARGS=()
 for dir in "$BCLAUDE_PATH" "$SANDBOX_HOME"; do
     case "$dir" in "$PROJECT"/*) MASK_ARGS+=(--ro-bind "$dir" "$dir") ;; esac
 done
+# Host git runs hooks, core.hooksPath/fsmonitor/pager and submodule hooks
+# unsandboxed; the whole gitdir is read-only so none can be planted. Inside,
+# git reads fine and every write fails loudly. Nested repos are not covered.
+if [ -e "$PROJECT/.git" ]; then MASK_ARGS+=(--ro-bind "$PROJECT/.git" "$PROJECT/.git"); fi
 case "$PROJECT" in
     "$BCLAUDE_PATH"|"$BCLAUDE_PATH"/*) cat >&2 <<'EOF'
 
@@ -197,10 +202,17 @@ BWRAP_ARGS=(
     --ro-bind /etc/group         /etc/group
     --ro-bind-try /etc/localtime /etc/localtime
     --ro-bind-try /etc/ca-certificates.conf /etc/ca-certificates.conf
+    # Debian/Fedora alternatives: without it awk, vi, pager... are dangling
+    # symlinks. -try because Arch, Alpine and NixOS have no such directory.
+    --ro-bind-try /etc/alternatives /etc/alternatives
+    # Without the cache ld.so only searches its built-in paths (/usr/local/lib
+    # and ld.so.conf.d entries vanish).
+    --ro-bind-try /etc/ld.so.cache /etc/ld.so.cache
     --proc /proc
     --dev /dev
     # tmpfs is RAM: cap /tmp at 2 GiB (--size takes bytes).
     --size 2147483648 --tmpfs /tmp
+    --size 2147483648 --tmpfs /var/tmp
 
     # The sandbox's own persistent home: ~/.claude.json (OAuth, trust) survives.
     --bind "$SANDBOX_HOME" "$HOME"
@@ -233,15 +245,23 @@ else
     exec 6</dev/null
     BWRAP_ARGS+=(--ro-bind-data 6 "$HOME/.claude/CLAUDE.md")
 fi
+# Never bound from the host: a local override of settings.json is the same
+# persistence channel, so it is always the empty object.
+exec 4<<<'{}'
+BWRAP_ARGS+=(--ro-bind-data 4 "$HOME/.claude/settings.local.json")
 
 BWRAP_ARGS+=(
     # Anti-persistence: empty tmpfs so a session can't plant anything that
-    # auto-loads into every later run.
-    --tmpfs "$HOME/.claude/agents"
-    --tmpfs "$HOME/.claude/commands"
-    --tmpfs "$HOME/.claude/hooks"
-    --tmpfs "$HOME/.claude/skills"
-    --tmpfs "$HOME/.claude/plugins"
+    # auto-loads into every later run, witth 1 MiB caps.
+    --size 1048576 --tmpfs "$HOME/.claude/agents"
+    --size 1048576 --tmpfs "$HOME/.claude/commands"
+    --size 1048576 --tmpfs "$HOME/.claude/hooks"
+    --size 1048576 --tmpfs "$HOME/.claude/skills"
+    --size 1048576 --tmpfs "$HOME/.claude/plugins"
+    --size 1048576 --tmpfs "$HOME/.claude/rules"
+    --size 1048576 --tmpfs "$HOME/.claude/output-styles"
+    --size 1048576 --tmpfs "$HOME/.claude/workflows"
+    --size 1048576 --tmpfs "$HOME/.claude/themes"
     # Same attack via shell rc files sourced by later shell snapshots: a
     # read-only empty mount point, so rm-and-replace fails too. One fd each,
     # bwrap closes it after reading. Not a bind of /dev/null: binds are nodev,

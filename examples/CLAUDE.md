@@ -44,7 +44,7 @@ Git and repository state
   restore the exact prior state afterwards — index and worktree both — and tell me
   what you ran and what you restored.
 - Read-only git is always fine: `status`, `diff`, `log`, `show`, `blame`,
-  `ls-files`, `rev-parse`, `cat-file`, `describe`, `worktree list`.
+  `ls-files`, `rev-parse`, `cat-file`, `describe`, `worktree list`, `grep`, ...
 - Exception: creating an isolated worktree via the `EnterWorktree` tool is allowed,
   since it touches nothing in my checkout. Inside it, the no-commit rule still holds.
 

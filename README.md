@@ -44,8 +44,9 @@ own state.
 
 The script runs `claude update` on the host first, since the sandbox is read-only
 wherever the updater writes; a failed update warns and launches the current
-version. With `CLAUDE_BIN` set the update is skipped and the binary file alone is
-bound read-only; its siblings stay absent.
+version. `DISABLE_AUTOUPDATER=1` skips it, useful for `-p` one-shots. With
+`CLAUDE_BIN` set the update is skipped too and the binary file alone is bound
+read-only; its siblings stay absent.
 
 ### First launch
 
@@ -149,12 +150,24 @@ What it protects against
   can override it. Your own `settings.json` and `CLAUDE.md` are bound read-only
   too, as a permissions and prompt-injection persistence channel otherwise. If
   the repo sits inside the project it is remounted read-only.
-- Cross-session persistence in the sandbox home: `~/.claude/agents`, `commands`,
-  `hooks`, `skills` and `plugins` are tmpfs, and the shell rc files are shadowed
-  by an empty read-only file. The project directory is not covered, see
+- Git hooks planted for the host: the project's `.git` is re-bound read-only
+  over the project, since `git commit` on the host runs `.git/hooks`, whatever
+  `core.hooksPath`, `core.fsmonitor` or `core.pager` point at in `.git/config`,
+  and the same under `.git/modules/*` for submodules, all unsandboxed. Inside,
+  git reads fine and every write (`add`, `commit`, `stash`, `checkout -b`,
+  `remote add`...) fails loudly. Only the top-level repository; see
   "Constraints and limits".
+- Cross-session persistence in the sandbox home: `~/.claude/agents`, `commands`,
+  `hooks`, `skills`, `plugins`, `rules`, `output-styles`, `workflows` and
+  `themes` are 1 MiB tmpfs (nothing legitimate writes there, so a planted file
+  fails instead of silently vanishing at exit), and `settings.local.json` and
+  the shell rc files are shadowed by an empty read-only file. A deny-list, so a
+  name Claude Code starts auto-loading in a future release is open until added
+  here. The project directory and auto memory are not covered, see "Constraints
+  and limits".
 - Runaway resources: a systemd scope with `MemoryMax=8G` and `TasksMax=1024`,
-  and `/tmp` as a tmpfs capped at 2 GiB. CPU and disk are not capped.
+  and `/tmp` and `/var/tmp` as tmpfs capped at 2 GiB each. CPU and disk are not
+  capped.
 - Defence in depth: Claude Code's inner sandbox with `failIfUnavailable: true`
   and a strict network allowlist. `strictAllowlist` denies unlisted domains with
   no prompt, `allowManagedDomainsOnly` ignores domains added from project
@@ -177,7 +190,8 @@ Layout
 Also bound read-only from your real home: `~/.claude/settings.json` and
 `~/.claude/CLAUDE.md` (your preferences and global instructions, the same as
 outside the sandbox; absent files are shadowed by an empty one so a session
-cannot create them), `~/.gitconfig`, `~/.local/bin`, `~/.local/share/claude` and
+cannot create them; `~/.claude/settings.local.json` is never bound and always
+shadowed), `~/.gitconfig`, `~/.local/bin`, `~/.local/share/claude` and
 `~/.nvm` (so a host `claude` and its runtime resolve; not all of `~/.local`,
 which holds keyrings and app data), plus the `claude` binary in use.
 
@@ -205,11 +219,22 @@ Constraints and limits
   `AGENTS.md` and `.claude/` auto-load into later sessions of that project and
   nothing masks them, so a prompt-injected session can leave instructions for
   the next. Deliberate: masking them would stop Claude keeping project notes.
-  Read those diffs, don't skim them.
+  The same goes for auto memory under `~/.claude/projects/<project>/memory/`,
+  which is per project and writable by design. Read those diffs, don't skim
+  them.
+- **What you run on the host runs sandbox-written files.** The sandbox ends at
+  the project mount: a `Makefile`, `package.json` scripts, `.vscode/tasks.json`,
+  a `.envrc`, a nested repository's `.git` are all writable inside and execute
+  with your privileges the moment you invoke them outside. Only the top-level
+  `.git` is pinned read-only, because git runs hooks and config from it
+  implicitly. Inside, that also means anything that writes git state (`add`,
+  `commit`, `stash`, branches, `remote add`, `config`) fails on the top-level
+  repo: do that from the host. Review the rest before you build, test or
+  `direnv allow` on the host.
 - **File-writing tools may not be confined by the mounts.** The Write tool
   created its temp file inside `~/.claude/` before the rename failed on the
-  read-only bind. Names under `~/.claude` that are neither bound nor tmpfs-masked
-  (`output-styles/`, `rules/`, `settings.local.json`...) may be writable through
+  read-only bind. Names under `~/.claude` that are neither bound, shadowed nor
+  tmpfs-masked (`keybindings.json`, `projects/`...) may be writable through
   those tools and persist. Observed, endpoint not tested; see the audit.
 - **The session token is readable inside.** `~/.claude/.credentials.json` and
   `~/.claude.json` are readable by any command, and the allowlist includes hosts
@@ -231,16 +256,18 @@ Constraints and limits
   version under `claude-home/.vscode-server/`. Harmless, shadowed at runtime.
 - **`--new-session` drops the controlling terminal** (TIOCSTI defence); the
   process reports "not a tty". If it ever breaks the TUI, revisit that flag.
-- **Minimal `/etc`.** DNS, TLS certificates, passwd/group and timezone only.
+- **Minimal `/etc`.** DNS, TLS certificates, passwd/group, timezone, the
+  alternatives links and the `ld.so` cache only. Anything else a tool reads
+  from `/etc` is absent: Debian's OpenJDK, for one, expects `/etc/java-*`.
 - **This repo is read-only inside** unless it is the project itself (see
   "Working on bubbleclaude itself"). Your global `CLAUDE.md` and `settings.json`
   are edited from outside. `claude-home/` is read-only from the project side in
   every configuration.
-- **Fixed limits, with gaps.** 8 GiB memory, 1024 tasks, 2 GiB `/tmp`; raise
-  them in the script if needed. No CPU or disk quota, so a runaway session can
-  pin every core and fill the host filesystem. The caps cannot be checked from
-  inside (no cgroupfs); use `systemctl --user show` on the scope. The hostname
-  inside is `bubbleclaude`.
+- **Fixed limits, with gaps.** 8 GiB memory, 1024 tasks, 2 GiB `/tmp` and
+  `/var/tmp`; raise them in the script if needed. No CPU or disk quota, so a
+  runaway session can pin every core and fill the host filesystem. The caps
+  cannot be checked from inside (no cgroupfs); use `systemctl --user show` on
+  the scope. The hostname inside is `bubbleclaude`.
 - **Same user, same kernel.** A namespace sandbox, not a VM: kernel exploits are
   out of scope.
 
