@@ -1,153 +1,127 @@
 #!/usr/bin/env bash
 
-# MIT License
-#
-# bubbleclaude: Run Claude Code inside a bubblewrap (bwrap) sandbox.
+# SPDX-License-Identifier: MIT
 # Copyright (c) 2026 Rémi Ducceschi
 #
-# Permission is hereby granted, free of charge, to any person obtaining a copy
-# of this software and associated documentation files (the "Software"), to deal
-# in the Software without restriction, including without limitation the rights
-# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-# copies of the Software, and to permit persons to whom the Software is
-# furnished to do so, subject to the following conditions:
+# bubbleclaude: run Claude Code inside a bubblewrap sandbox.
+# Allowlist model: nothing exists inside unless bound below. Unlisted paths are
+# absent, not merely denied.
 #
-# The above copyright notice and this permission notice shall be included in all
-# copies or substantial portions of the Software.
-
-# Launch Claude Code inside a bubblewrap sandbox.
-#
-# Allowlist model: nothing exists inside the sandbox unless bound in below.
-# Paths not listed are ABSENT, not merely denied
-#
-# Usage:  cd /path/to/project && bclaude.sh [claude args...]
+# Usage: cd /path/to/project && bclaude.sh [claude args...]
 # The launch directory is the project, and the only writable place inside.
-# CLAUDE_BIN=/path/to/claude overrides the PATH lookup; bclaude-vscode.sh uses
-# that to run the VS Code extension's bundled binary in the same cage.
+# CLAUDE_BIN=/path/to/claude overrides the PATH lookup (bclaude-vscode.sh).
+# SANDBOX_HOME=/path overrides the fake home (default: claude-home/ in the repo).
 #
-# Verify it is actually working, from your normal shell:
-#     readlink /proc/self/ns/mnt
-# then ask Claude to run the same command. Different inode = sandboxed.
-# A *matching* inode means the sandbox is not applying, whatever you configured.
+# Check it applies: `readlink /proc/self/ns/mnt` from your shell and from inside
+# must differ. Same inode = no sandbox, whatever you configured.
 
 set -eufo pipefail
 
-# readlink -f: $0 may be a symlink (e.g. ~/.local/bin/bclaude), and the binds
-# below must resolve relative to the real repo, not the symlink's directory.
-BCLAUDE_PATH="$(realpath "$(dirname "$(readlink -f "$0")")")"
+die() { echo "$*" >&2; exit 1; }
+
+# readlink -f: $0 may be a symlink, and binds must resolve against the real repo.
+BCLAUDE_PATH="$(dirname "$(readlink -f "$0")")"
 REAL_HOME="$(realpath "$HOME")"
-
-# This is the folder that will be mounted as the new home in the sandbox
 SANDBOX_HOME="$(realpath -m "${SANDBOX_HOME:-$BCLAUDE_PATH/claude-home}")"
-# Path to the claude's settings.json and CLAUDE.md files to use in the sandbox (~/.claude/settings.json)
-CLAUDE_SETTINGS_PATH="$(realpath "$BCLAUDE_PATH/claude-settings")"
+# Policy only, bound as managed settings: no user or project file outranks it.
+MANAGED_SETTINGS="$BCLAUDE_PATH/managed-settings.json"
+# The user's layer, as outside the sandbox. Resolved: symlinked into a dotfiles
+# repo, these must still fail the project checks below.
+USER_CLAUDE_DIR="$(realpath -m "$REAL_HOME/.claude")"
+USER_SETTINGS="$(realpath -m "$USER_CLAUDE_DIR/settings.json")"
+USER_CLAUDE_MD="$(realpath -m "$USER_CLAUDE_DIR/CLAUDE.md")"
 
-# Resolved on the HOST. An explicit CLAUDE_BIN wins over the PATH lookup: that
-# is how bclaude-vscode.sh hands over the extension's bundled binary.
+# Resolved on the HOST. An explicit CLAUDE_BIN (the VS Code wrapper) is not
+# updated: the extension ships its own copy.
 export PATH="$HOME/.local/bin:$PATH"
 if [ -n "${CLAUDE_BIN:-}" ]; then
-    EXPLICIT_BIN=1
+    UPDATE=0
 else
-    CLAUDE_BIN="$(command -v claude)" || { echo "claude not found in PATH" >&2; exit 1; }
-    EXPLICIT_BIN=0
+    CLAUDE_BIN="$(command -v claude)" || die "claude not found in PATH"
+    UPDATE=1
 fi
-# The directory of the path as found, not of its target: an nvm `claude` is a
-# symlink into node_modules, and the `node` its shebang needs sits beside it.
+# Dir as found, not resolved: an nvm symlink's node sits beside it. File
+# resolved: only that one file is bound, so it has to be the real one.
 CLAUDE_BIN_DIR="$(realpath "$(dirname "$CLAUDE_BIN")")"
-# The file itself resolved: only this one file is bound in, so it has to be
-# the real one, and -f keeps a directory from passing as "executable".
 CLAUDE_BIN_REAL="$(realpath "$CLAUDE_BIN")"
 if [ ! -f "$CLAUDE_BIN_REAL" ] || [ ! -x "$CLAUDE_BIN_REAL" ]; then
-    echo "not an executable file: $CLAUDE_BIN_REAL" >&2
-    exit 1
+    die "not an executable file: $CLAUDE_BIN_REAL"
 fi
 
-# Canonical throughout: a symlinked launch path would not exist inside the
-# sandbox, and --chdir must land on the directory that was actually bound.
+# Canonical: a symlinked launch path would not exist inside the sandbox.
 PROJECT="$(realpath "$PWD")"
-
-# Binding the project over a parent of the real home would undo the sandbox
-# home: later mounts stack over earlier ones, so $HOME would resolve back to
-# your real files. Matched separately because "/" never matches "$PROJECT"/*.
+# The project is bound writable on top of everything else, so a parent of the
+# real home would resolve $HOME back to your real files, and the sandbox home
+# would become a writable persistence channel. "/" never matches "$PROJECT"/*.
 case "$PROJECT" in
-    /)  echo "refusing: / is not a project directory" >&2
-        exit 1 ;;
+    /)  die "refusing: / is not a project directory" ;;
     "$SANDBOX_HOME"|"$SANDBOX_HOME"/*)
-        echo "refusing: $PROJECT is inside the sandbox home ($SANDBOX_HOME)" >&2
-        echo "that is the session's own state, not a project." >&2
-        exit 1 ;;
-    "$REAL_HOME/.claude"|"$REAL_HOME/.claude"/*)
-        echo "refusing: you're running bclaude from $PROJECT" >&2
-        echo "Bro... WTF" >&2
-        exit 1 ;;
+        die "refusing: $PROJECT is inside the sandbox home ($SANDBOX_HOME)" ;;
+    "$USER_CLAUDE_DIR"|"$USER_CLAUDE_DIR"/*)
+        die "refusing: $PROJECT is your Claude config directory. Bro... WTF" ;;
 esac
 case "$REAL_HOME" in
     "$PROJECT"|"$PROJECT"/*)
-        echo "refusing: $PROJECT holds your real home directory" >&2
-        echo "cd into an actual project; the launch directory is bound writable." >&2
-        exit 1 ;;
+        die "refusing: $PROJECT holds your real home directory" ;;
 esac
-
-mkdir -p "$SANDBOX_HOME/.claude"
-# Host-side copy for the unsandboxed VS Code extension (CLAUDE_CONFIG_DIR);
-# inside, the ro-bind shadows it. cp, never a rename: a new inode would detach
-# that ro-bind in running sessions. cmp skips the truncate-rewrite window.
-if ! cmp -s "$CLAUDE_SETTINGS_PATH/settings.json" "$SANDBOX_HOME/.claude/settings.json"; then
-    cp "$CLAUDE_SETTINGS_PATH/settings.json" "$SANDBOX_HOME/.claude/settings.json"
-fi
-
-# Remount this repo read-only when it sits inside the project: otherwise the
-# agent edits bclaude.sh or settings.json through the project mount and widens
-# its own next launch. All three sources are checked: the ro-binds at
-# ~/.claude protect the view, not a repointed source.
-MASK_ARGS=()
-DEV_MODE=0
-case "$PROJECT" in
-    "$BCLAUDE_PATH"|"$BCLAUDE_PATH"/*) DEV_MODE=1 ;;
-esac
-# Dev mode keeps the repo writable so the session is useful, but never the
-# sandbox home: anything planted there auto-loads into every later session,
-# which is the one thing no warning can make safe.
-if [ "$DEV_MODE" -eq 1 ]; then
-    MASK_SOURCES=("$SANDBOX_HOME")
-else
-    MASK_SOURCES=("$BCLAUDE_PATH" "$CLAUDE_SETTINGS_PATH" "$SANDBOX_HOME")
-fi
-for real in "${MASK_SOURCES[@]}"; do
-    case "$real" in
-        "$PROJECT"/*) MASK_ARGS+=(--ro-bind "$real" "$real") ;;
+# Your real config resolved under the project would be writable from inside,
+# even as a dangling symlink a session could then target: refused, not masked.
+for path in "$USER_CLAUDE_DIR" "$USER_SETTINGS" "$USER_CLAUDE_MD"; do
+    case "$path" in
+        "$PROJECT"|"$PROJECT"/*)
+            die "refusing: $PROJECT holds your Claude config ($path)" ;;
     esac
 done
 
-if [ "$DEV_MODE" -eq 1 ]; then
-    cat >&2 <<'EOF'
+# Host copy for the unsandboxed VS Code extension; inside, the ro-bind shadows
+# it. Written in place, never unlinked: a new inode detaches live sessions' bind.
+HOST_SETTINGS="$SANDBOX_HOME/.claude/settings.json"
+mkdir -p "$SANDBOX_HOME/.claude"
+if [ -e "$HOST_SETTINGS" ] || [ -L "$HOST_SETTINGS" ]; then
+    # Anything but a plain file means a session got write access: never write
+    # through it. 0444 is the mount point an older launch let bwrap create.
+    { [ ! -L "$HOST_SETTINGS" ] && [ -f "$HOST_SETTINGS" ] \
+        && [ "$(stat -c %h "$HOST_SETTINGS")" -eq 1 ]; } \
+        || die "refusing: $HOST_SETTINGS is not a plain file"
+    chmod u+w "$HOST_SETTINGS"
+else
+    : > "$HOST_SETTINGS"
+fi
+if [ -f "$USER_SETTINGS" ]; then
+    cmp -s "$USER_SETTINGS" "$HOST_SETTINGS" || cp "$USER_SETTINGS" "$HOST_SETTINGS"
+else
+    [ "$(cat "$HOST_SETTINGS")" = '{}' ] || echo '{}' > "$HOST_SETTINGS"
+fi
+
+# The repo and the sandbox home are re-bound read-only when they sit under the
+# project: otherwise a session edits its own next launch through the project
+# mount. Launched from the repo itself (dev mode) the repo is the project and
+# stays writable, with a warning; the sandbox home never does.
+MASK_ARGS=()
+for dir in "$BCLAUDE_PATH" "$SANDBOX_HOME"; do
+    case "$dir" in "$PROJECT"/*) MASK_ARGS+=(--ro-bind "$dir" "$dir") ;; esac
+done
+case "$PROJECT" in
+    "$BCLAUDE_PATH"|"$BCLAUDE_PATH"/*) cat >&2 <<'EOF'
 
 ***    WARNING: THIS SESSION RUNS INSIDE THE BUBBLECLAUDE REPOSITORY.     ***
 ***   THE REPO IS WRITABLE, SO CLAUDE CAN EDIT ITS OWN CAGE: CHANGES TO   ***
-***    bclaude.sh OR claude-settings/ TAKE EFFECT ON THE NEXT LAUNCH.     ***
+***  bclaude.sh OR managed-settings.json TAKE EFFECT ON THE NEXT LAUNCH.  ***
 ***   READ EVERY DIFF BEFORE YOU RELAUNCH. claude-home/ STAYS READ-ONLY.  ***
 
 EOF
-fi
+    ;;
+esac
 
-# Update claude as it can't update itself in the sandbox. Not for an explicit
-# binary: the VS Code extension ships and updates its own copy, and `update`
-# on it would target whatever host install exists, or none.
-if [ "$EXPLICIT_BIN" -eq 0 ]; then
+# Updated on the host: the sandbox is read-only where npm writes.
+if [ "$UPDATE" -eq 1 ]; then
     "$CLAUDE_BIN" update || echo "warning: update failed, launching current version" >&2
 fi
 
-# Host variables that cross --clearenv. A positive list, because the host env
-# is not fully trusted: VS Code's environmentVariables setting (its scope is
-# undocumented) or a parent session can set anything. Each name here is
-# harmless even if hostile:
-# the worst case is a degraded session, never new file access, code loading
-# (CLAUDE_CODE_PLUGIN_DIRS), another settings file (..._MANAGED_SETTINGS_PATH),
-# credentials or a provider/endpoint switch (ANTHROPIC_*, CLAUDE_CODE_USE_*).
-# Static preferences do not belong here at all: put them in the read-only
-# claude-settings/settings.json "env" block, which the CLI applies to itself.
+# The only host variables that cross --clearenv: each must stay harmless under
+# a hostile value. Never ANTHROPIC_*, credentials, plugin dirs or settings paths.
 ENV_ALLOW=(
-    # What the VS Code extension and the Agent SDK set per launch.
+    # Set per launch by the VS Code extension and the Agent SDK.
     CLAUDE_CODE_ENTRYPOINT CLAUDE_AGENT_SDK_VERSION
     CLAUDE_CODE_EMIT_STARTUP_TIMING CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS
     CLAUDE_CODE_EMIT_TOOL_USE_SUMMARIES CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING
@@ -177,120 +151,111 @@ for name in "${ENV_ALLOW[@]}"; do
         ENV_ARGS+=(--setenv "$name" "${!name}")
     fi
 done
-# Rewritten, not forwarded: the host points it at claude-home/.claude for the
-# extension, and inside the sandbox that same directory is simply ~/.claude.
+# Rewritten, not forwarded: on the host it points the extension at
+# claude-home/.claude, which inside the sandbox is simply ~/.claude.
 if [ "${CLAUDE_CONFIG_DIR+set}" ]; then
     ENV_ARGS+=(--setenv CLAUDE_CONFIG_DIR "$HOME/.claude")
 fi
 
-exec systemd-run --user --scope -q \
-    -p MemoryMax=8G -p TasksMax=1024 \
-    bwrap \
-        `# ---- namespaces -------------------------------------------------` \
-        `# --unshare-all covers user, pid, ipc, uts, cgroup and net.` \
-        `# --share-net must come after it, and re-shares ONLY the network.` \
-        `# CAVEAT: sharing the network namespace also shares abstract-namespace` \
-        `# Unix sockets. Under X11 that includes the X server, and anything that` \
-        `# can reach X11 can keylog the session. Check: echo $XDG_SESSION_TYPE` \
-        `# On Wayland the compositor socket is a file in XDG_RUNTIME_DIR, which` \
-        `# is not bound here, so this matters much less.` \
-        --unshare-all \
-        --share-net \
-        `# Neutral hostname: don't leak the host's name into prompts/logs.` \
-        --hostname bubbleclaude \
-        --die-with-parent \
-        `# --new-session drops the controlling terminal (TIOCSTI defence).` \
-        `# It makes the process report "not a tty". That is fine for one-shot` \
-        `# non-interactive runs; if it breaks the interactive TUI, drop it and` \
-        `# accept the (small, on modern kernels) TIOCSTI risk instead.` \
-        --new-session \
-        \
-        `# ---- environment: start empty, add back only what is needed -----` \
-        `# Without this you inherit SSH_AUTH_SOCK, GITHUB_TOKEN, AWS_*, DISPLAY...` \
-        --clearenv \
-        --setenv HOME "$HOME" \
-        `# CLAUDE_BIN's own dir first: with an nvm install, node sits next to` \
-        `# claude and the env-node shebang needs it on PATH.` \
-        --setenv PATH "$CLAUDE_BIN_DIR":"$HOME/.local/bin":/usr/local/bin:/usr/bin:/usr/sbin:/bin:/sbin \
-        --setenv TERM "${TERM:-xterm-256color}" \
-        --setenv LANG "${LANG:-C.UTF-8}" \
-        --setenv USER "${USER:-$(id -un)}" \
-        `# Host variables from the ENV_ALLOW list above.` \
-        "${ENV_ARGS[@]}" \
-        \
-        `# ---- system, read-only ------------------------------------------` \
-        --ro-bind /usr /usr \
-        `# Debian is usr-merged: /bin /sbin /lib /lib64 are symlinks into /usr.` \
-        `# Recreate them as symlinks rather than --ro-bind, which would replace` \
-        `# a symlink with a real directory and can confuse path comparisons.` \
-        --symlink usr/bin   /bin \
-        --symlink usr/sbin  /sbin \
-        --symlink usr/lib   /lib \
-        --symlink usr/lib64 /lib64 \
-        \
-        `# ---- minimal /etc; note nsswitch.conf, which glibc needs for DNS -` \
-        --ro-bind /etc/resolv.conf   /etc/resolv.conf \
-        --ro-bind /etc/nsswitch.conf /etc/nsswitch.conf \
-        --ro-bind /etc/hosts         /etc/hosts \
-        --ro-bind /etc/ssl           /etc/ssl \
-        --ro-bind /etc/passwd        /etc/passwd \
-        --ro-bind /etc/group         /etc/group \
-        --ro-bind-try /etc/localtime /etc/localtime \
-        --ro-bind-try /etc/ca-certificates.conf /etc/ca-certificates.conf \
-        \
-        `# ---- fresh pseudo-filesystems -----------------------------------` \
-        --proc /proc \
-        --dev /dev \
-        `# tmpfs is RAM; cap /tmp (2 GiB, --size wants bytes) so it can't eat it all` \
-        --size 2147483648 --tmpfs /tmp \
-        \
-        `# The sandbox gets its own real home directory. Persists across runs, so` \
-        `# ~/.claude.json (OAuth session, preferences, per-project trust) survives.` \
-        --bind "$SANDBOX_HOME" "$HOME" \
-        `# Read-only: CLAUDE.md auto-loads into every session, so writable it would` \
-        `# be a persistent prompt-injection channel. Edit it from the host instead.` \
-        --ro-bind "$CLAUDE_SETTINGS_PATH/CLAUDE.md" "$HOME/.claude/CLAUDE.md" \
-        \
-        `# Sources resolve on the HOST, so these read from your real home while` \
-        `# landing inside the sandbox home.` \
-        --ro-bind-try "$REAL_HOME/.gitconfig" "$HOME/.gitconfig" \
-        --ro-bind-try "$REAL_HOME/.config/git/config" "$HOME/.config/git/config" \
-        --ro-bind-try "$REAL_HOME/.local/bin"     "$HOME/.local/bin" \
-        --ro-bind-try "$REAL_HOME/.local/share/claude"     "$HOME/.local/share/claude" \
-        --ro-bind-try "$REAL_HOME/.nvm"       "$HOME/.nvm" \
-        `# The claude binary alone, never its directory: a CLAUDE_BIN under /tmp` \
-        `# or ~/.config must not drag the siblings in. A no-op inside /usr or` \
-        `# ~/.local; the only bind of ~/.vscode-server/... for the bundled copy.` \
-        --ro-bind "$CLAUDE_BIN_REAL" "$CLAUDE_BIN_REAL" \
-        \
-        `# Still pin settings.json read-only from the host copy: otherwise Claude` \
-        `# could rewrite its own sandbox.network.allowedDomains for the next run.` \
-        --ro-bind "$CLAUDE_SETTINGS_PATH/settings.json" "$HOME/.claude/settings.json" \
-        `# Same file again as managed settings, the TOP of the precedence chain:` \
-        `# a writable project .claude/settings.json can outrank user settings, but` \
-        `# nothing outranks managed.` \
-        --ro-bind "$CLAUDE_SETTINGS_PATH/settings.json" /etc/claude-code/managed-settings.json \
-        `# Mask as empty tmpfs so a session can't plant agents/commands/hooks/` \
-        `# skills/plugins that auto-load into every future run (anti-persistence).` \
-        --tmpfs "$HOME/.claude/agents" \
-        --tmpfs "$HOME/.claude/commands" \
-        --tmpfs "$HOME/.claude/hooks" \
-        --tmpfs "$HOME/.claude/skills" \
-        --tmpfs "$HOME/.claude/plugins" \
-        `# Same attack via shell rc files, sourced by future sessions' shell` \
-        `# snapshots: shadow them with a read-only empty file, and rm-and-replace` \
-        `# fails too (mount point). Content comes from fds opened on /dev/null at` \
-        `# the exec line, one per file since bwrap closes each after reading. Not` \
-        `# a bind of /dev/null itself: bwrap mounts binds nodev, so a device node` \
-        `# there is unopenable and breaks sourcing.` \
-        --ro-bind-data 7 "$HOME/.bashrc" \
-        --ro-bind-data 8 "$HOME/.bash_profile" \
-        --ro-bind-data 9 "$HOME/.profile" \
-        \
-        `# ---- the project: the only genuinely writable place -------------` \
-        --bind "$PROJECT" "$PROJECT" \
-        `# Later mounts stack over earlier ones: mask the repo read-only (see top).` \
-        "${MASK_ARGS[@]}" \
-        --chdir "$PROJECT" \
-        \
-        "$CLAUDE_BIN_REAL" "$@" 7</dev/null 8</dev/null 9</dev/null
+# Mount order matters: later binds stack over earlier ones, which is why the
+# project and the masks come last.
+BWRAP_ARGS=(
+    # --share-net must follow --unshare-all and re-shares ONLY the network.
+    # Caveat: that includes abstract-namespace Unix sockets, i.e. the X server
+    # under X11 (keylogging reach). Wayland's socket is a file and is not bound.
+    --unshare-all --share-net
+    # Don't leak the host's name into prompts and logs.
+    --hostname bubbleclaude
+    --die-with-parent
+    # Drops the controlling terminal (TIOCSTI defence) at the cost of "not a
+    # tty". If it ever breaks the interactive TUI, drop it and accept the risk.
+    --new-session
+
+    # Start empty, else SSH_AUTH_SOCK, GITHUB_TOKEN, AWS_*, DISPLAY leak in.
+    --clearenv
+    --setenv HOME "$HOME"
+    # CLAUDE_BIN's dir first: with nvm, the node its shebang needs sits beside it.
+    --setenv PATH "$CLAUDE_BIN_DIR:$HOME/.local/bin:/usr/local/bin:/usr/bin:/usr/sbin:/bin:/sbin"
+    --setenv TERM "${TERM:-xterm-256color}"
+    --setenv LANG "${LANG:-C.UTF-8}"
+    --setenv USER "${USER:-$(id -un)}"
+    "${ENV_ARGS[@]}"
+
+    --ro-bind /usr /usr
+    # Debian is usr-merged: symlinks, not binds, which would turn them into real
+    # directories and confuse path comparisons.
+    --symlink usr/bin   /bin
+    --symlink usr/sbin  /sbin
+    --symlink usr/lib   /lib
+    --symlink usr/lib64 /lib64
+    # Minimal /etc; nsswitch.conf is what glibc needs for DNS.
+    --ro-bind /etc/resolv.conf   /etc/resolv.conf
+    --ro-bind /etc/nsswitch.conf /etc/nsswitch.conf
+    --ro-bind /etc/hosts         /etc/hosts
+    --ro-bind /etc/ssl           /etc/ssl
+    --ro-bind /etc/passwd        /etc/passwd
+    --ro-bind /etc/group         /etc/group
+    --ro-bind-try /etc/localtime /etc/localtime
+    --ro-bind-try /etc/ca-certificates.conf /etc/ca-certificates.conf
+    --proc /proc
+    --dev /dev
+    # tmpfs is RAM: cap /tmp at 2 GiB (--size takes bytes).
+    --size 2147483648 --tmpfs /tmp
+
+    # The sandbox's own persistent home: ~/.claude.json (OAuth, trust) survives.
+    --bind "$SANDBOX_HOME" "$HOME"
+    # Sources resolve on the HOST: these read your real home and land inside.
+    --ro-bind-try "$REAL_HOME/.gitconfig" "$HOME/.gitconfig"
+    --ro-bind-try "$REAL_HOME/.config/git/config" "$HOME/.config/git/config"
+    --ro-bind-try "$REAL_HOME/.local/bin" "$HOME/.local/bin"
+    --ro-bind-try "$REAL_HOME/.local/share/claude" "$HOME/.local/share/claude"
+    --ro-bind-try "$REAL_HOME/.nvm" "$HOME/.nvm"
+    # The binary alone, never its directory: a CLAUDE_BIN under ~/.vscode-server
+    # or /tmp must not drag its siblings in.
+    --ro-bind "$CLAUDE_BIN_REAL" "$CLAUDE_BIN_REAL"
+    # Managed settings are the TOP of the precedence chain: a writable project
+    # .claude/settings.json can outrank user settings, nothing outranks these.
+    # Hard bind: without it there is no inner sandbox and no network allowlist.
+    --ro-bind "$MANAGED_SETTINGS" /etc/claude-code/managed-settings.json
+)
+
+# Shadowed present or not: left unbound, a session could create settings.json
+# (permissions, env) or CLAUDE.md (prompt injection) in the persistent home.
+if [ -f "$USER_SETTINGS" ]; then
+    BWRAP_ARGS+=(--ro-bind "$USER_SETTINGS" "$HOME/.claude/settings.json")
+else
+    exec 5<<<'{}'
+    BWRAP_ARGS+=(--ro-bind-data 5 "$HOME/.claude/settings.json")
+fi
+if [ -f "$USER_CLAUDE_MD" ]; then
+    BWRAP_ARGS+=(--ro-bind "$USER_CLAUDE_MD" "$HOME/.claude/CLAUDE.md")
+else
+    exec 6</dev/null
+    BWRAP_ARGS+=(--ro-bind-data 6 "$HOME/.claude/CLAUDE.md")
+fi
+
+BWRAP_ARGS+=(
+    # Anti-persistence: empty tmpfs so a session can't plant anything that
+    # auto-loads into every later run.
+    --tmpfs "$HOME/.claude/agents"
+    --tmpfs "$HOME/.claude/commands"
+    --tmpfs "$HOME/.claude/hooks"
+    --tmpfs "$HOME/.claude/skills"
+    --tmpfs "$HOME/.claude/plugins"
+    # Same attack via shell rc files sourced by later shell snapshots: a
+    # read-only empty mount point, so rm-and-replace fails too. One fd each,
+    # bwrap closes it after reading. Not a bind of /dev/null: binds are nodev,
+    # so a device node there is unopenable and breaks sourcing.
+    --ro-bind-data 7 "$HOME/.bashrc"
+    --ro-bind-data 8 "$HOME/.bash_profile"
+    --ro-bind-data 9 "$HOME/.profile"
+
+    # The project: the only genuinely writable place. Then the masks (see top).
+    --bind "$PROJECT" "$PROJECT"
+    "${MASK_ARGS[@]}"
+    --chdir "$PROJECT"
+)
+
+exec systemd-run --user --scope -q -p MemoryMax=8G -p TasksMax=1024 \
+    bwrap "${BWRAP_ARGS[@]}" "$CLAUDE_BIN_REAL" "$@" \
+    7</dev/null 8</dev/null 9</dev/null

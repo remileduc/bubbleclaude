@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
 
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Rémi Ducceschi
+#
 # VS Code's claudeCode.claudeProcessWrapper calls `<wrapper> <bundled claude>
 # <args...>` with cwd = workspace: argv[1] becomes CLAUDE_BIN, see README.
 

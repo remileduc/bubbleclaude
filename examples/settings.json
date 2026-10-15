@@ -1,0 +1,7 @@
+{
+  "model": "fable[1m]",
+  "effortLevel": "high",
+  "awaySummaryEnabled": false,
+  "theme": "dark",
+  "tui": "fullscreen"
+}

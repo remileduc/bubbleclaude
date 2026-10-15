@@ -20,8 +20,8 @@ exist in the repo to serve as a mount point, but its contents are personal secre
 (OAuth tokens!) and must never be committed.
 
 Note that some paths inside are overridden by the script at launch:
-`.claude/settings.json` and `.claude/CLAUDE.md` are bound read-only from
-`../claude-settings/`, and `.claude/{agents,commands,hooks,skills,plugins}` are
+`.claude/settings.json` and `.claude/CLAUDE.md` are bound read-only from your
+real `~/.claude/`, and `.claude/{agents,commands,hooks,skills,plugins}` are
 masked with throwaway tmpfs so a session cannot plant anything that auto-loads
 into future sessions.
 

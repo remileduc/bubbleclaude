@@ -27,7 +27,7 @@ Sandbox
   usually surfaces as a plain connection failure.
 - If a command fails and the host isn't on that list, don't retry, switch
   mirrors, or work around it: report the exact domain to me so I can add it to
-  `claude-settings/settings.json` on the host and relaunch.
+  `managed-settings.json` on the host and relaunch.
 
 Git and repository state
 ------------------------
