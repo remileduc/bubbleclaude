@@ -279,11 +279,13 @@ exec systemd-run --user --scope -q \
         --tmpfs "$HOME/.claude/plugins" \
         `# Same attack via shell rc files, sourced by future sessions' shell` \
         `# snapshots: shadow them with a read-only empty file, and rm-and-replace` \
-        `# fails too (mount point). NOT /dev/null: bwrap mounts binds nodev, so a` \
-        `# device node there is unopenable and breaks shell-snapshot sourcing.` \
-        --ro-bind "$CLAUDE_SETTINGS_PATH/empty" "$HOME/.bashrc" \
-        --ro-bind "$CLAUDE_SETTINGS_PATH/empty" "$HOME/.bash_profile" \
-        --ro-bind "$CLAUDE_SETTINGS_PATH/empty" "$HOME/.profile" \
+        `# fails too (mount point). Content comes from fds opened on /dev/null at` \
+        `# the exec line, one per file since bwrap closes each after reading. Not` \
+        `# a bind of /dev/null itself: bwrap mounts binds nodev, so a device node` \
+        `# there is unopenable and breaks sourcing.` \
+        --ro-bind-data 7 "$HOME/.bashrc" \
+        --ro-bind-data 8 "$HOME/.bash_profile" \
+        --ro-bind-data 9 "$HOME/.profile" \
         \
         `# ---- the project: the only genuinely writable place -------------` \
         --bind "$PROJECT" "$PROJECT" \
@@ -291,4 +293,4 @@ exec systemd-run --user --scope -q \
         "${MASK_ARGS[@]}" \
         --chdir "$PROJECT" \
         \
-        "$CLAUDE_BIN_REAL" "$@"
+        "$CLAUDE_BIN_REAL" "$@" 7</dev/null 8</dev/null 9</dev/null
