@@ -1,0 +1,7 @@
+# The workflow's actions are the repo's only dependency: a PR per new major.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly

@@ -137,6 +137,24 @@ Launching from a directory that merely contains the repo (`~/projects`, with the
 repo at `~/projects/bubbleclaude`) is safe: the repo is remounted read-only
 inside the writable project.
 
+### Tests
+
+What CI runs, reproducible locally with the same two commands. Needs
+[bats](https://github.com/bats-core/bats-core), `shellcheck`, `jq`, `bwrap` and
+unprivileged user namespaces.
+
+```sh
+tests/lint.sh                        # bash -n, shellcheck, jq on every script and JSON file
+BCLAUDE_TEST_NO_SYSTEMD=1 bats tests # policy invariants, refusals, the mount layout
+```
+
+The layout files launch `bclaude.sh` for real with `CLAUDE_BIN=/bin/bash`
+against throwaway homes and projects, once per scenario in `setup_file`, and
+check what the sections above promise: remapped home, absent secrets, cleared
+environment, read-only masks, refused directories. Omit the variable where a
+systemd user session exists and `systemd-run` runs for real; the CI runners have
+none, so it swaps in a passthrough shim and the resource limits go untested.
+
 What it protects against
 ------------------------
 

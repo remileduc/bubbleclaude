@@ -1,0 +1,36 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Lint
+        run: tests/lint.sh
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install bats and bubblewrap
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends bats bubblewrap
+      # Ubuntu gates unprivileged user namespaces behind AppArmor; bwrap needs
+      # them to mount. The knob is absent on kernels without the patch.
+      - name: Allow unprivileged user namespaces
+        run: |
+          if [ -e /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]; then
+            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          fi
+      # Runners have no systemd user session: the resource-limit wrapper is
+      # shimmed, everything else runs for real.
+      - name: Tests
+        run: BCLAUDE_TEST_NO_SYSTEMD=1 bats tests
