@@ -44,9 +44,7 @@ own state.
 
 The script runs `claude update` on the host first, since the sandbox is read-only
 wherever the updater writes; a failed update warns and launches the current
-version. `DISABLE_AUTOUPDATER=1` skips it, useful for `-p` one-shots. With
-`CLAUDE_BIN` set the update is skipped too and the binary file alone is bound
-read-only; its siblings stay absent.
+version. `DISABLE_AUTOUPDATER=1` skips it, useful for `-p` one-shots.
 
 ### First launch
 
@@ -58,7 +56,8 @@ persists across runs (OAuth session, preferences, per-project trust, history).
 
 The [extension](https://code.claude.com/docs/en/vs-code) runs on the Linux side
 and starts its bundled `claude` with the workspace folder as working directory.
-Point it at `bclaude-vscode.sh`, which turns that binary into `CLAUDE_BIN` and
+Point it at `bclaude-vscode.sh`, which turns that binary into `CLAUDE_BIN`,
+sets `DISABLE_AUTOUPDATER=1` so the extension's own copy is never touched, and
 calls `bclaude.sh`. Two host-side settings, both with full paths (no `~`):
 
 **1. `claudeCode.claudeProcessWrapper`**, in machine scope so the project's
@@ -148,12 +147,13 @@ tests/lint.sh                        # bash -n, shellcheck, jq on every script a
 BCLAUDE_TEST_NO_SYSTEMD=1 bats tests # policy invariants, refusals, the mount layout
 ```
 
-The layout files launch `bclaude.sh` for real with `CLAUDE_BIN=/bin/bash`
-against throwaway homes and projects, once per scenario in `setup_file`, and
-check what the sections above promise: remapped home, absent secrets, cleared
-environment, read-only masks, refused directories. Omit the variable where a
-systemd user session exists and `systemd-run` runs for real; the CI runners have
-none, so it swaps in a passthrough shim and the resource limits go untested.
+The layout files launch `bclaude.sh` for real with `CLAUDE_BIN=/bin/bash` and
+the updater disabled, against throwaway homes and projects, once per scenario
+in `setup_file`, and check what the sections above promise: remapped home,
+absent secrets, cleared environment, read-only masks, refused directories.
+Omit the variable where a systemd user session exists and `systemd-run` runs
+for real; the CI runners have none, so it swaps in a passthrough shim and the
+resource limits go untested.
 
 What it protects against
 ------------------------
@@ -199,7 +199,7 @@ Layout
 | Path                                | Role                                                                         |
 |-------------------------------------|------------------------------------------------------------------------------|
 | `bclaude.sh`                        | The whole tool: resolves `claude` on the host, updates it, `exec bwrap`      |
-| `bclaude-vscode.sh`                 | VS Code entry point: argv[1] becomes `CLAUDE_BIN`, the rest passes on        |
+| `bclaude-vscode.sh`                 | VS Code entry point: argv[1] becomes `CLAUDE_BIN`, no update, rest passes on |
 | `claude-home/`                      | Bound over `$HOME`; the only persistent state (OAuth, prefs, history)        |
 | `claude-home/.claude/settings.json` | Copy of `~/.claude/settings.json`, `{}` if absent, for the VS Code extension |
 | `managed-settings.json`             | Policy only, bound read-only as top-precedence managed settings              |

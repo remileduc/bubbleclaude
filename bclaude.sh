@@ -31,13 +31,8 @@ USER_CLAUDE_DIR="$(realpath -m "$REAL_HOME/.claude")"
 USER_SETTINGS="$(realpath -m "$USER_CLAUDE_DIR/settings.json")"
 USER_CLAUDE_MD="$(realpath -m "$USER_CLAUDE_DIR/CLAUDE.md")"
 
-# Resolved on the HOST. An explicit CLAUDE_BIN (the VS Code wrapper) is not
-# updated: the extension ships its own copy. DISABLE_AUTOUPDATER is Claude's
-# own switch, honoured here too so `-p` one-shots skip the network round trip.
+# Resolved on the HOST.
 export PATH="$HOME/.local/bin:$PATH"
-UPDATE=1
-[ -z "${CLAUDE_BIN:-}" ] || UPDATE=0
-case "${DISABLE_AUTOUPDATER:-}" in 1|[Tt][Rr][Uu][Ee]|[Yy][Ee][Ss]|[Oo][Nn]) UPDATE=0 ;; esac
 if [ -z "${CLAUDE_BIN:-}" ]; then
     CLAUDE_BIN="$(command -v claude)" || die "claude not found in PATH"
 fi
@@ -118,10 +113,13 @@ EOF
     ;;
 esac
 
-# Updated on the host: the sandbox is read-only where npm writes.
-if [ "$UPDATE" -eq 1 ]; then
-    "$CLAUDE_BIN" update || echo "warning: update failed, launching current version" >&2
-fi
+# Updated on the host: the sandbox is read-only where npm writes. Claude's own
+# DISABLE_AUTOUPDATER switch covers this step too (`-p` one-shots, the VS Code
+# wrapper whose bundled binary must not self-replace).
+case "${DISABLE_AUTOUPDATER:-}" in
+    1|[Tt][Rr][Uu][Ee]|[Yy][Ee][Ss]|[Oo][Nn]) ;;
+    *) "$CLAUDE_BIN" update || echo "warning: update failed, launching current version" >&2 ;;
+esac
 
 # The only host variables that cross --clearenv: each must stay harmless under
 # a hostile value. Never ANTHROPIC_*, credentials, plugin dirs or settings paths.

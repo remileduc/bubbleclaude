@@ -74,11 +74,13 @@ for p in "$@"; do r "w_$p" "$(w "$p")"; done
 # launch <script> <home> <sandbox-home|-> <project> [bash args...]
 # Canary variables stand in for the host secrets that --clearenv must drop;
 # DISABLE_TELEMETRY and CLAUDE_CONFIG_DIR are the two forwarding paths.
-# TEST_CLAUDE_BIN stands in for the binary; it must behave like bash.
+# TEST_CLAUDE_BIN stands in for the binary; it must behave like bash, and
+# DISABLE_AUTOUPDATER keeps the script from running `bash update` on it.
 launch() {
     local script="$1" home="$2" sandbox="$3" project="$4"
     shift 4
     local -a vars=(HOME="$home" PATH="$BIN:$PATH" CLAUDE_BIN="${TEST_CLAUDE_BIN:-/bin/bash}"
+        DISABLE_AUTOUPDATER=1
         USER="${USER:-$(id -un)}" SSH_AUTH_SOCK=/leak GITHUB_TOKEN=leak
         ANTHROPIC_API_KEY=leak DISPLAY=:0 DISABLE_TELEMETRY=1
         CLAUDE_CONFIG_DIR=/elsewhere)
