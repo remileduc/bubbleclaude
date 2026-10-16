@@ -31,6 +31,9 @@ setup_file() {
 @test "CLAUDE_CONFIG_DIR rewritten to the sandbox ~/.claude" {
     is main env_CLAUDE_CONFIG_DIR "$HOME1/.claude"
 }
+@test "PATH omits ~/.local/bin when the host has none" {
+    [[ "$(rv main env_PATH)" != *"/.local/bin"* ]]
+}
 @test "real home absent" { is main host_secret no; }
 @test "sandbox home mounted at HOME" { is main sandbox_canary yes; }
 @test "/etc/shadow absent" { is main etc_shadow no; }

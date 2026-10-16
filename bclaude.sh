@@ -162,6 +162,17 @@ if [ "${CLAUDE_CONFIG_DIR+set}" ]; then
     ENV_ARGS+=(--setenv CLAUDE_CONFIG_DIR "$HOME/.claude")
 fi
 
+# ~/.local/bin on PATH only when bound from the host: unbound, it is a
+# writable directory in the persistent home that later sessions resolve through.
+LOCAL_BIN=
+[ ! -d "$REAL_HOME/.local/bin" ] || LOCAL_BIN="$HOME/.local/bin:"
+# The binary's dir on PATH only under nvm, where the node its shebang needs sits
+# beside it: elsewhere (~/.vscode-server) its mount point is a writable dir in $HOME.
+BIN_PATH=
+case "$CLAUDE_BIN_DIR" in
+    "$REAL_HOME"/.nvm/*) BIN_PATH="$CLAUDE_BIN_DIR:" ;;
+esac
+
 # Mount order matters: later binds stack over earlier ones, which is why the
 # project and the masks come last.
 BWRAP_ARGS=(
@@ -179,8 +190,7 @@ BWRAP_ARGS=(
     # Start empty, else SSH_AUTH_SOCK, GITHUB_TOKEN, AWS_*, DISPLAY leak in.
     --clearenv
     --setenv HOME "$HOME"
-    # CLAUDE_BIN's dir first: with nvm, the node its shebang needs sits beside it.
-    --setenv PATH "$CLAUDE_BIN_DIR:$HOME/.local/bin:/usr/local/bin:/usr/bin:/usr/sbin:/bin:/sbin"
+    --setenv PATH "$BIN_PATH$LOCAL_BIN/usr/local/bin:/usr/bin:/usr/sbin:/bin:/sbin"
     --setenv TERM "${TERM:-xterm-256color}"
     --setenv LANG "${LANG:-C.UTF-8}"
     --setenv USER "${USER:-$(id -un)}"
@@ -222,8 +232,7 @@ BWRAP_ARGS=(
     --ro-bind-try "$REAL_HOME/.local/bin" "$HOME/.local/bin"
     --ro-bind-try "$REAL_HOME/.local/share/claude" "$HOME/.local/share/claude"
     --ro-bind-try "$REAL_HOME/.nvm" "$HOME/.nvm"
-    # The binary alone, never its directory: a CLAUDE_BIN under ~/.vscode-server
-    # or /tmp must not drag its siblings in.
+    # The binary alone, never its directory.
     --ro-bind "$CLAUDE_BIN_REAL" "$CLAUDE_BIN_REAL"
     # Managed settings are the TOP of the precedence chain: a writable project
     # .claude/settings.json can outrank user settings, nothing outranks these.
@@ -276,6 +285,6 @@ BWRAP_ARGS+=(
     --chdir "$PROJECT"
 )
 
-exec systemd-run --user --scope -q -p MemoryMax=8G -p TasksMax=1024 \
+exec systemd-run --user --scope -q -p MemoryMax=8G -p TasksMax=1024 -p CPUWeight=25 \
     bwrap "${BWRAP_ARGS[@]}" "$CLAUDE_BIN_REAL" "$@" \
     7</dev/null 8</dev/null 9</dev/null

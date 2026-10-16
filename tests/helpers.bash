@@ -46,7 +46,7 @@ r ns "$(readlink /proc/self/ns/mnt)"
 r home "$HOME"
 r pwd "$PWD"
 r hostname "$(cat /proc/sys/kernel/hostname)"
-for v in SSH_AUTH_SOCK GITHUB_TOKEN ANTHROPIC_API_KEY DISPLAY DISABLE_TELEMETRY CLAUDE_CONFIG_DIR; do
+for v in SSH_AUTH_SOCK GITHUB_TOKEN ANTHROPIC_API_KEY DISPLAY DISABLE_TELEMETRY CLAUDE_CONFIG_DIR PATH; do
     r "env_$v" "${!v-unset}"
 done
 r host_secret "$(e "$HOME/secret")"
@@ -74,10 +74,11 @@ for p in "$@"; do r "w_$p" "$(w "$p")"; done
 # launch <script> <home> <sandbox-home|-> <project> [bash args...]
 # Canary variables stand in for the host secrets that --clearenv must drop;
 # DISABLE_TELEMETRY and CLAUDE_CONFIG_DIR are the two forwarding paths.
+# TEST_CLAUDE_BIN stands in for the binary; it must behave like bash.
 launch() {
     local script="$1" home="$2" sandbox="$3" project="$4"
     shift 4
-    local -a vars=(HOME="$home" PATH="$BIN:$PATH" CLAUDE_BIN=/bin/bash
+    local -a vars=(HOME="$home" PATH="$BIN:$PATH" CLAUDE_BIN="${TEST_CLAUDE_BIN:-/bin/bash}"
         USER="${USER:-$(id -un)}" SSH_AUTH_SOCK=/leak GITHUB_TOKEN=leak
         ANTHROPIC_API_KEY=leak DISPLAY=:0 DISABLE_TELEMETRY=1
         CLAUDE_CONFIG_DIR=/elsewhere)

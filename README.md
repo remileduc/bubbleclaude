@@ -184,8 +184,9 @@ What it protects against
   here. The project directory and auto memory are not covered, see "Constraints
   and limits".
 - Runaway resources: a systemd scope with `MemoryMax=8G` and `TasksMax=1024`,
-  and `/tmp` and `/var/tmp` as tmpfs capped at 2 GiB each. CPU and disk are not
-  capped.
+  and `/tmp` and `/var/tmp` as tmpfs capped at 2 GiB each. CPU is weighted
+  (`CPUWeight=25`: full speed when idle, yields to your other work under
+  contention) but not capped; disk is neither.
 - Defence in depth: Claude Code's inner sandbox with `failIfUnavailable: true`
   and a strict network allowlist. `strictAllowlist` denies unlisted domains with
   no prompt, `allowManagedDomainsOnly` ignores domains added from project
@@ -272,6 +273,9 @@ Constraints and limits
   leaves its empty directory chain in the sandbox home (`~/work/myproject` →
   `claude-home/work/myproject`); the VS Code binary bind leaves one per extension
   version under `claude-home/.vscode-server/`. Harmless, shadowed at runtime.
+  Neither is on `PATH`: the binary's directory is added only under `~/.nvm`
+  (read-only, and `node` must be found beside it), and `~/.local/bin` only
+  when bound from your real home.
 - **`--new-session` drops the controlling terminal** (TIOCSTI defence); the
   process reports "not a tty". If it ever breaks the TUI, revisit that flag.
 - **Minimal `/etc`.** DNS, TLS certificates, passwd/group, timezone, the
@@ -282,8 +286,9 @@ Constraints and limits
   are edited from outside. `claude-home/` is read-only from the project side in
   every configuration.
 - **Fixed limits, with gaps.** 8 GiB memory, 1024 tasks, 2 GiB `/tmp` and
-  `/var/tmp`; raise them in the script if needed. No CPU or disk quota, so a
-  runaway session can pin every core and fill the host filesystem. The caps
+  `/var/tmp`; raise them in the script if needed. No CPU or disk quota: a
+  runaway session can still pin every core on an idle host (`CPUWeight=25`
+  only makes it lose to your foreground work) and fill the filesystem. The caps
   cannot be checked from inside (no cgroupfs); use `systemctl --user show` on
   the scope. The hostname inside is `bubbleclaude`.
 - **Same user, same kernel.** A namespace sandbox, not a VM: kernel exploits are
