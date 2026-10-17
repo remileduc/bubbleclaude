@@ -24,6 +24,17 @@ refused() {
     refused "$HOME1" "$SH" "$BATS_FILE_TMPDIR" "holds your real home"
 }
 @test "refuses the sandbox home" { refused "$HOME1" "$SH" "$SH" "inside the sandbox home"; }
+@test "refuses the real home as sandbox home, before touching it" {
+    local home="$BATS_TEST_TMPDIR/home"
+    mkdir -p "$home"
+    refused "$home" "$home" "$PROJ" "sandbox home $home holds your real home"
+    [ ! -e "$home/.claude" ]
+}
+@test "refuses a parent of the real home as sandbox home" {
+    local parent="$BATS_TEST_TMPDIR/parent" proj="$BATS_TEST_TMPDIR/proj"
+    mkdir -p "$parent/home" "$proj"
+    refused "$parent/home" "$parent" "$proj" "sandbox home $parent holds your real home"
+}
 @test "refuses a directory inside the sandbox home" {
     refused "$HOME1" "$SH" "$SH/sub" "inside the sandbox home"
 }

@@ -3,6 +3,7 @@
 # mount point in the persistent sandbox home and must stay off PATH.
 
 load helpers
+bats_require_minimum_version 1.5.0
 
 setup_file() {
     systemd_shim
@@ -14,10 +15,28 @@ setup_file() {
     cp /bin/bash "$BINDIR/claude"
     cp /bin/bash "$NVMDIR/claude"
     touch "$HOME1/.local/bin/host-tool"
+    # Two older versions' stub chains, as bwrap leaves them behind: prev-ext is
+    # still installed on the host (another window may run it), old-ext is gone.
+    mkdir -p "$HOME1/.vscode-server/extensions/prev-ext"
+    for v in prev-ext old-ext; do
+        mkdir -p "$SH/.vscode-server/extensions/$v/resources/native-binary"
+        : > "$SH/.vscode-server/extensions/$v/resources/native-binary/claude"
+    done
     TEST_CLAUDE_BIN="$BINDIR/claude" probe home "$REPO/bclaude.sh" "$HOME1" "$SH" "$PROJ" \
         "$HOME1/.local/bin/smoke"
     TEST_CLAUDE_BIN="$NVMDIR/claude" probe nvm "$REPO/bclaude.sh" "$HOME1" "$SH" "$PROJ" \
         "$NVMDIR/smoke"
+}
+
+# symlinked_stubs <link path under the sandbox home> <dir created under the target>
+# The target holds a version absent from the host, the one a prune would delete.
+symlinked_stubs() {
+    local sh="$BATS_TEST_TMPDIR/sh" real="$BATS_TEST_TMPDIR/real"
+    mkdir -p "$(dirname "$sh/$1")" "$real/$2/other-ext"
+    ln -s "$real" "$sh/$1"
+    TEST_CLAUDE_BIN="$BINDIR/claude" run -1 launch "$REPO/bclaude.sh" "$HOME1" "$sh" "$PROJ" -c true
+    [[ $output == *"resolves to"* ]]
+    [ -d "$real/$2/other-ext" ]
 }
 
 @test "binary dir under the home is not on PATH" {
@@ -42,4 +61,24 @@ setup_file() {
 @test "host: sandbox home holds only the mount-point stub" {
     local stub="$SH/.vscode-server/extensions/ext/resources/native-binary"
     [ "$(ls -A "$stub")" = claude ]
+}
+@test "host: stubs of removed versions pruned, installed ones kept" {
+    [ "$(ls -A "$SH/.vscode-server/extensions")" = $'ext\nprev-ext' ]
+}
+@test "host: refuses to prune through a symlinked extensions dir" {
+    symlinked_stubs .vscode-server/extensions .
+}
+@test "host: refuses to prune through a symlinked .vscode-server" {
+    symlinked_stubs .vscode-server extensions
+}
+@test "host: an undeletable stub warns and launches" {
+    [ "$(id -u)" -ne 0 ] || skip "root ignores file modes"
+    local sh="$BATS_TEST_TMPDIR/sh" stuck="$BATS_TEST_TMPDIR/sh/.vscode-server/extensions/stuck"
+    mkdir -p "$stuck/d"
+    chmod 000 "$stuck"
+    TEST_CLAUDE_BIN="$BINDIR/claude" run -0 launch "$REPO/bclaude.sh" "$HOME1" "$sh" "$PROJ" \
+        -c 'echo LAUNCHED'
+    chmod u+rwx "$stuck"
+    [[ $output == *"warning: could not prune"* ]]
+    [[ $output == *LAUNCHED* ]]
 }

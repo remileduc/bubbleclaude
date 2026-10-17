@@ -59,6 +59,9 @@ esac
 case "$REAL_HOME" in
     "$PROJECT"|"$PROJECT"/*)
         die "refusing: $PROJECT holds your real home directory" ;;
+    # Bound over $HOME: your real home would be its own writable fake home.
+    "$SANDBOX_HOME"|"$SANDBOX_HOME"/*)
+        die "refusing: sandbox home $SANDBOX_HOME holds your real home" ;;
 esac
 # Your real config resolved under the project would be writable from inside,
 # even as a dangling symlink a session could then target: refused, not masked.
@@ -88,6 +91,31 @@ if [ -f "$USER_SETTINGS" ]; then
 else
     [ "$(cat "$HOST_SETTINGS")" = '{}' ] || echo '{}' > "$HOST_SETTINGS"
 fi
+
+# An editor's bundled binary (<dotdir>/extensions/<id>/..., resolved: a
+# relocated ~/.vscode-server lands where its target is) leaves its mount-point
+# chain in the sandbox home, one per extension version. Prune only the versions
+# the editor has removed: unlinking a mount point on the host detaches the bind
+# of a live session, and another window runs an older version until it reloads.
+case "$CLAUDE_BIN_REAL" in
+    "$REAL_HOME"/.*/extensions/*/*)
+        HOST_EXT="${CLAUDE_BIN_REAL%%/extensions/*}/extensions"
+        STUBS="$SANDBOX_HOME/${HOST_EXT#"$REAL_HOME"/}"
+        KEEP=()
+        while IFS= read -r -d '' name; do KEEP+=(! -name "$name"); done \
+            < <(find "$HOST_EXT" -mindepth 1 -maxdepth 1 -printf '%f\0')
+        # Empty means the host listing failed: pruning everything would be wrong.
+        if [ ${#KEEP[@]} -gt 0 ]; then (
+            cd "$STUBS" 2>/dev/null || exit 0
+            # A session can swap any component under the sandbox home for a
+            # symlink to your real files between a check and the rm: cd pins
+            # the directory, and the physical path tells whether it is ours.
+            [ "$(pwd -P)" = "$STUBS" ] || die "refusing: $STUBS resolves to $(pwd -P)"
+            # Housekeeping, not policy: an undeletable stub must not block launches.
+            find . -mindepth 1 -maxdepth 1 "${KEEP[@]}" -exec rm -rf -- {} + \
+                || echo "warning: could not prune stale extension stubs in $STUBS" >&2
+        ); fi ;;
+esac
 
 # The repo and the sandbox home are re-bound read-only when they sit under the
 # project: otherwise a session edits its own next launch through the project
@@ -193,7 +221,7 @@ BWRAP_ARGS=(
     --setenv LANG "${LANG:-C.UTF-8}"
     --setenv USER "${USER:-$(id -un)}"
     # Updated on the host above; inside, the updater could only fail or litter
-	# the sandbox home.
+    # the sandbox home.
     --setenv DISABLE_AUTOUPDATER 1
     "${ENV_ARGS[@]}"
 

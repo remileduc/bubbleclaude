@@ -288,8 +288,11 @@ Constraints and limits
   in `bclaude.sh` bounds that. Read `.vscode/` diffs like memory files.
 - **Mount points materialise in `claude-home/`.** A project under your real home
   leaves its empty directory chain in the sandbox home (`~/work/myproject` →
-  `claude-home/work/myproject`); the VS Code binary bind leaves one per extension
-  version under `claude-home/.vscode-server/`. Harmless, shadowed at runtime.
+  `claude-home/work/myproject`); the VS Code binary bind leaves one under
+  `claude-home/.vscode-server/` (or `.vscode/`, `.cursor-server/`: whichever
+  `extensions/` directory the binary came from), and the launcher prunes those
+  of extension versions the editor has since removed. Harmless, shadowed at
+  runtime.
   Neither is on `PATH`: the binary's directory is added only under `~/.nvm`
   (read-only, and `node` must be found beside it), and `~/.local/bin` only
   when bound from your real home.
