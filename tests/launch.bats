@@ -31,6 +31,9 @@ setup_file() {
 @test "CLAUDE_CONFIG_DIR rewritten to the sandbox ~/.claude" {
     is main env_CLAUDE_CONFIG_DIR "$HOME1/.claude"
 }
+@test "DISABLE_AUTOUPDATER forced to 1, not forwarded" { is main env_DISABLE_AUTOUPDATER 1; }
+# Unprivileged bwrap empties the bounding set itself; --cap-drop ALL would be a no-op.
+@test "capability bounding set empty" { is main capbnd 0000000000000000; }
 @test "PATH omits ~/.local/bin when the host has none" {
     [[ "$(rv main env_PATH)" != *"/.local/bin"* ]]
 }

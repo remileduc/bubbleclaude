@@ -46,9 +46,11 @@ r ns "$(readlink /proc/self/ns/mnt)"
 r home "$HOME"
 r pwd "$PWD"
 r hostname "$(cat /proc/sys/kernel/hostname)"
-for v in SSH_AUTH_SOCK GITHUB_TOKEN ANTHROPIC_API_KEY DISPLAY DISABLE_TELEMETRY CLAUDE_CONFIG_DIR PATH; do
+for v in SSH_AUTH_SOCK GITHUB_TOKEN ANTHROPIC_API_KEY DISPLAY DISABLE_TELEMETRY CLAUDE_CONFIG_DIR \
+         DISABLE_AUTOUPDATER PATH; do
     r "env_$v" "${!v-unset}"
 done
+r capbnd "$(awk "/^CapBnd:/ {print \$2}" /proc/self/status)"
 r host_secret "$(e "$HOME/secret")"
 r sandbox_canary "$(e "$HOME/sandbox-canary")"
 r etc_shadow "$(e /etc/shadow)"
@@ -75,12 +77,13 @@ for p in "$@"; do r "w_$p" "$(w "$p")"; done
 # Canary variables stand in for the host secrets that --clearenv must drop;
 # DISABLE_TELEMETRY and CLAUDE_CONFIG_DIR are the two forwarding paths.
 # TEST_CLAUDE_BIN stands in for the binary; it must behave like bash, and
-# DISABLE_AUTOUPDATER keeps the script from running `bash update` on it.
+# DISABLE_AUTOUPDATER keeps the script from running `bash update` on it: `yes`
+# rather than `1`, so the forced value inside is told apart from forwarding.
 launch() {
     local script="$1" home="$2" sandbox="$3" project="$4"
     shift 4
     local -a vars=(HOME="$home" PATH="$BIN:$PATH" CLAUDE_BIN="${TEST_CLAUDE_BIN:-/bin/bash}"
-        DISABLE_AUTOUPDATER=1
+        DISABLE_AUTOUPDATER=yes
         USER="${USER:-$(id -un)}" SSH_AUTH_SOCK=/leak GITHUB_TOKEN=leak
         ANTHROPIC_API_KEY=leak DISPLAY=:0 DISABLE_TELEMETRY=1
         CLAUDE_CONFIG_DIR=/elsewhere)

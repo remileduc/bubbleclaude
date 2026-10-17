@@ -254,18 +254,24 @@ Constraints and limits
   them.
 - **What you run on the host runs sandbox-written files.** The sandbox ends at
   the project mount: a `Makefile`, `package.json` scripts, `.vscode/tasks.json`,
-  a `.envrc`, a nested repository's `.git` are all writable inside and execute
-  with your privileges the moment you invoke them outside. Only the top-level
-  `.git` is pinned read-only, because git runs hooks and config from it
-  implicitly. Inside, that also means anything that writes git state (`add`,
-  `commit`, `stash`, branches, `remote add`, `config`) fails on the top-level
-  repo: do that from the host. Review the rest before you build, test or
-  `direnv allow` on the host.
-- **File-writing tools may not be confined by the mounts.** The Write tool
-  created its temp file inside `~/.claude/` before the rename failed on the
-  read-only bind. Names under `~/.claude` that are neither bound, shadowed nor
-  tmpfs-masked (`keybindings.json`, `projects/`...) may be writable through
-  those tools and persist. Observed, endpoint not tested; see the audit.
+  a `.envrc`, most of a nested repository's `.git` are all writable inside and
+  execute with your privileges the moment you invoke them outside. The
+  top-level `.git` is pinned read-only in full, because git runs hooks and
+  config from it implicitly; in a nested repository only `.git/config` and a
+  non-empty `.git/hooks` are pinned, by Claude Code's inner sandbox, and a
+  clone can then no longer be deleted from inside (`rm -rf` hits the pin with
+  EBUSY; delete it from the host). Inside, the top-level pin also means
+  anything that writes git state (`add`, `commit`, `stash`, branches,
+  `remote add`, `config`) fails on this repo: do that from the host. Review
+  the rest before you build, test or `direnv allow` on the host.
+- **File-writing tools are not confined by the mounts.** Bash runs in Claude
+  Code's inner sandbox, where all of `$HOME` is read-only; the Write and Edit
+  tools run in the CLI process, where `claude-home/` is bound writable. Names
+  under `~/.claude` that are neither bound, shadowed nor tmpfs-masked
+  (`routines/`, `keybindings.json`...) are writable through those tools and
+  persist into every later session, confirmed end-to-end in the audit. Nothing
+  there is executable or on `PATH`. After a suspicious session, check from the
+  host: `find claude-home -newer claude-home/README.md -not -path '*/.claude/*'`.
 - **The session token is readable inside.** `~/.claude/.credentials.json` and
   `~/.claude.json` are readable by any command, and the allowlist includes hosts
   that accept data. The token is scoped to the sandbox session, not your host
@@ -308,16 +314,21 @@ Constraints and limits
 Security audit
 --------------
 
-Audited from inside a live session on 2026-08-16, eleven boundaries probed with
-non-destructive checks: [`pentest-prompt.md`](pentest-prompt.md) drove it,
+Audited from inside live sessions on 2026-08-16 and 2026-10-16, eleven
+boundaries probed with non-destructive checks:
+[`pentest-prompt.md`](pentest-prompt.md) drove it,
 [`pentest-report.md`](pentest-report.md) records evidence, classification and
 severity per boundary.
 
-Nine boundaries came out contained. The one violation is partial: the project
-memory files above. That, the unconfined file-writing tools, the readable token
-and the missing CPU and disk quotas are listed under "Constraints and limits";
-the proposed fixes were reviewed and declined, with each trade-off recorded in
-the report. The audit also corrected this README on two points: the network
-namespace is private in practice, and egress is blocked by an empty routing table
-before the proxy allowlist applies, so there is no IP-literal or raw-socket
-bypass.
+Ten boundaries came out contained; resource limits are mixed (memory and tasks
+capped, CPU weighted, disk neither). The one violation is partial, persistence:
+the file-writing tools above, confirmed to persist into later sessions, and the
+project memory files, which are deliberate. Those, the readable token and the
+missing CPU and disk quotas are listed under "Constraints and limits". The
+proposed fixes were reviewed and declined, with each trade-off recorded in the
+report; what the audit found cheap to close has been (no writable directory on
+`PATH`, the in-sandbox updater off). The audit also corrected this README on
+three points: the network namespace is private in practice, egress is blocked by
+an empty routing table before the proxy allowlist applies, so there is no
+IP-literal or raw-socket bypass, and a nested repository's `.git/config` and
+hooks are pinned by the inner sandbox.
