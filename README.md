@@ -6,6 +6,17 @@ Run [Claude Code](https://claude.com/claude-code) inside a [bubblewrap](https://
 home, keys, credentials and environment are absent, not denied. The only writable
 location is the directory you launch from.
 
+- [Requirements](#requirements)
+- [Usage](#usage)
+  - [First launch](#first-launch)
+  - [VS Code (Linux and WSL)](#vs-code-linux-and-wsl)
+  - [Working on bubbleclaude itself](#working-on-bubbleclaude-itself)
+  - [Tests](#tests)
+- [What it protects against](#what-it-protects-against)
+- [Layout](#layout)
+- [Constraints and limits](#constraints-and-limits)
+- [Security audit](#security-audit)
+
 Requirements
 ------------
 
