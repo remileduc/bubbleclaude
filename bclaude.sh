@@ -92,11 +92,9 @@ else
     [ "$(cat "$HOST_SETTINGS")" = '{}' ] || echo '{}' > "$HOST_SETTINGS"
 fi
 
-# An editor's bundled binary (<dotdir>/extensions/<id>/..., resolved: a
-# relocated ~/.vscode-server lands where its target is) leaves its mount-point
-# chain in the sandbox home, one per extension version. Prune only the versions
-# the editor has removed: unlinking a mount point on the host detaches the bind
-# of a live session, and another window runs an older version until it reloads.
+# An editor's bundled binary leaves its mount-point chain in the sandbox home,
+# one per extension version. Prune only the versions the editor has removed:
+# unlinking a mount point on the host detaches the bind of a live session.
 case "$CLAUDE_BIN_REAL" in
     "$REAL_HOME"/.*/extensions/*/*)
         HOST_EXT="${CLAUDE_BIN_REAL%%/extensions/*}/extensions"

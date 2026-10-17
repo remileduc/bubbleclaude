@@ -3,19 +3,15 @@ bubbleclaude
 
 Run [Claude Code](https://claude.com/claude-code) inside a [bubblewrap](https://github.com/containers/bubblewrap)
 (`bwrap`) sandbox. Nothing exists inside unless `bclaude.sh` binds it in: your
-home, keys, credentials and environment are absent, not denied. The only writable
-location is the directory you launch from.
+home, keys, credentials and environment are absent, not denied. The only
+writable location is the directory you launch from.
 
 - [Requirements](#requirements)
 - [Usage](#usage)
-  - [First launch](#first-launch)
-  - [VS Code (Linux and WSL)](#vs-code-linux-and-wsl)
-  - [Working on bubbleclaude itself](#working-on-bubbleclaude-itself)
-  - [Tests](#tests)
-- [What it protects against](#what-it-protects-against)
-- [Layout](#layout)
-- [Constraints and limits](#constraints-and-limits)
-- [Security audit](#security-audit)
+- [VS Code (Linux and WSL)](#vs-code-linux-and-wsl)
+- [How it works](#how-it-works)
+- [Known gaps](#known-gaps)
+- [Tests and audit](#tests-and-audit)
 
 Requirements
 ------------
@@ -31,50 +27,52 @@ Requirements
 Usage
 -----
 
-The launch directory is the project: bound writable at its real path, and the
-only writable place inside.
-
 ```sh
 ln -s ~/projects/bubbleclaude/bclaude.sh ~/.local/bin/bclaude   # once
 cd ~/work/myproject && bclaude [claude args...]
 ```
 
-Arguments go straight to `claude` (`bclaude -p "..."`, `bclaude --resume`).
-Environment overrides:
+The launch directory is the project: bound writable at its real path, the only
+writable place inside, one project per session. Arguments go straight to
+`claude`. Two overrides:
 
 ```sh
 SANDBOX_HOME=/path/home bclaude     # fake home (default: <repo>/claude-home)
 CLAUDE_BIN=/path/to/claude bclaude  # this binary instead of the one on PATH
 ```
 
-Refused launch directories: `/`, your home or any parent of it, `claude-home/` or
-anything under it, and anything holding or inside your real `~/.claude` (symlinks
-resolved, `settings.json` and `CLAUDE.md` included). Bound as the project, they
-would stack over the sandbox home and hand the session your real files, or its
-own state.
+Refused as launch directory: `/`, your home or a parent of it, the sandbox home
+or anything under it, and anything holding your real `~/.claude` (symlinks
+resolved). Bound as the project, they would hand the session your real files or
+its own state.
 
-The script runs `claude update` on the host first, since the sandbox is read-only
-wherever the updater writes; a failed update warns and launches the current
-version. `DISABLE_AUTOUPDATER=1` skips it, useful for `-p` one-shots.
+`claude update` runs on the host before each launch, the sandbox being
+read-only where the updater writes. `DISABLE_AUTOUPDATER=1` skips it.
 
-### First launch
+**First launch.** The sandbox home starts empty: log in and answer the
+onboarding again. The result lives in `claude-home/` and persists (OAuth
+session, preferences, per-project trust, history).
 
-The sandbox home starts empty: log in and answer the onboarding questions again,
-even if Claude is configured on the host. The result lives in `claude-home/` and
-persists across runs (OAuth session, preferences, per-project trust, history).
+**Working on bubbleclaude itself.** Launching from this repo is allowed, but
+the repo is then writable: a session can change the mount layout or widen the
+network allowlist for every later run. The script prints an uppercase warning;
+read every diff before you relaunch. `claude-home/` stays read-only from the
+project side even then. Launching from a parent of the repo is safe: the repo
+is remounted read-only.
 
-### VS Code (Linux and WSL)
+VS Code (Linux and WSL)
+-----------------------
 
 The [extension](https://code.claude.com/docs/en/vs-code) runs on the Linux side
 and starts its bundled `claude` with the workspace folder as working directory.
-Point it at `bclaude-vscode.sh`, which turns that binary into `CLAUDE_BIN`,
-sets `DISABLE_AUTOUPDATER=1` so the extension's own copy is never touched, and
-calls `bclaude.sh`. Two host-side settings, both with full paths (no `~`):
+Point it at `bclaude-vscode.sh`, which passes that binary as `CLAUDE_BIN`,
+disables the updater and calls `bclaude.sh`. Two host-side settings, full
+paths, no `~`:
 
-**1. `claudeCode.claudeProcessWrapper`**, in machine scope so the project's
-`.vscode/settings.json` cannot repoint it. WSL or any remote: **Preferences: Open
-Remote Settings**, which writes `~/.vscode-server/data/Machine/settings.json`.
-Local Linux: user settings, `~/.config/Code/User/settings.json`.
+**1. `claudeCode.claudeProcessWrapper`**, in machine scope so a project's
+`.vscode/settings.json` cannot repoint it. WSL or any remote: **Preferences:
+Open Remote Settings** (`~/.vscode-server/data/Machine/settings.json`). Local
+Linux: `~/.config/Code/User/settings.json`.
 
 ```json
 {
@@ -86,17 +84,17 @@ Local Linux: user settings, `~/.config/Code/User/settings.json`.
 ```
 
 **2. `CLAUDE_CONFIG_DIR` in the extension host's environment.** The extension
-runs outside the sandbox and reads Claude's config directory on the host:
-sessions, settings, credentials, and its IDE server's lock file under `ide/`. The
-sandbox sees the same state at `~/.claude`, which is `claude-home/.claude` on the
-host. The `environmentVariables` entry above is not enough on its own: tested,
-the extension host kept reading the real `~/.claude`.
+runs outside the sandbox and reads Claude's config directory on the host
+(sessions, settings, credentials, the IDE server's lock file). It must read
+`claude-home/.claude`, which is `~/.claude` inside. The `environmentVariables`
+entry above is not enough on its own: tested, the extension host kept reading
+the real `~/.claude`.
 
-- WSL: `~/.vscode-server/server-env-setup`, the one hook the VS Code server
-  sources (it runs no shell rc files). It must be valid Bourne shell: a syntax
-  error stops the server from starting, and the fix is to delete or rename the
-  file from a plain WSL shell. Restart the server afterwards (close the remote
-  connection, or `wsl --shutdown`); a window reload is not enough.
+- WSL: `~/.vscode-server/server-env-setup`, the one file the VS Code server
+  sources. Plain Bourne shell: a syntax error stops the server from starting,
+  and the fix is to delete the file from a WSL shell. Then restart the server
+  (close the remote connection, or `wsl --shutdown`); a window reload is not
+  enough.
 
   ```sh
   export CLAUDE_CONFIG_DIR=/home/you/projects/bubbleclaude/claude-home/.claude
@@ -108,230 +106,135 @@ the extension host kept reading the real `~/.claude`.
 Side effect: a host `claude` run from VS Code's integrated terminal then uses
 `claude-home/.claude` too, unsandboxed.
 
-From there it behaves as in a terminal: sign in from the panel once, the
-directory refusals and the dev-mode warning apply. The script's own output goes
-to **Claude Code: View output logs**, not a terminal; a refused workspace shows up
-there as the process exiting at startup.
+From there it behaves as in a terminal: sign in once from the panel, refusals
+and the dev-mode warning apply. The script's output goes to **Claude Code: View
+output logs**; a refused workspace shows there as the process exiting at
+startup.
 
-Two details of the plumbing:
+Two details. `bclaude.sh` copies your `~/.claude/settings.json` to
+`claude-home/.claude/settings.json` at each launch (`{}` when you have none),
+so the extension host sees the same preferences as the sandbox. And only the
+host variables named in the script's `ENV_ALLOW` list cross into the sandbox,
+each harmless under a hostile value: never `ANTHROPIC_*` or credentials, and
+`CLAUDE_CONFIG_DIR` is rewritten to the sandbox's `~/.claude`. Static
+preferences go in the `env` block of `~/.claude/settings.json`. Check with
+`CLAUDE_BIN=/usr/bin/env bclaude`.
 
-- `bclaude.sh` refreshes `claude-home/.claude/settings.json` from your
-  `~/.claude/settings.json` at every launch (`{}` when you have none) so the
-  extension host reads the same preferences as the sandbox. Inside, the read-only
-  bind still wins. The file is rewritten in place and only when its content
-  changed: a fresh inode would detach the bind in sessions already running, and
-  the extension never catches it half-written.
-- Only the host variables named in the script's `ENV_ALLOW` list cross into the
-  sandbox: what the extension sets per launch, plus harmless knobs (token and
-  timeout limits, telemetry and UI switches). It is a positive list because VS
-  Code or a parent session can set anything, so every name on it has to stay
-  harmless under a hostile value, a degraded session at worst. Everything else is
-  dropped,
-  `ANTHROPIC_*` and credentials included, and `CLAUDE_CONFIG_DIR` is rewritten to
-  the sandbox's `~/.claude`. Static preferences go in the `env` block of
-  `~/.claude/settings.json` instead. Check with `CLAUDE_BIN=/usr/bin/env bclaude`.
+How it works
+------------
 
-### Working on bubbleclaude itself
+| Path                    | Role                                                            |
+|-------------------------|-----------------------------------------------------------------|
+| `bclaude.sh`            | The whole tool: resolves `claude`, updates it, `exec bwrap`     |
+| `bclaude-vscode.sh`     | VS Code entry point: argv[1] becomes `CLAUDE_BIN`, no update    |
+| `claude-home/`          | Bound over `$HOME`; the only persistent state                   |
+| `managed-settings.json` | Policy only, bound read-only as top-precedence managed settings |
+| `examples/`             | Hints for your own `~/.claude/settings.json` and `CLAUDE.md`    |
 
-Launching from inside this repo is allowed. The repo is then the project, hence
-writable, and the sandbox no longer protects itself: a session can edit the
-mount layout or widen `sandbox.network.allowedDomains` in `managed-settings.json`,
-and the change applies to every later sandbox. The script prints an uppercase
-warning and continues. Read every diff before you relaunch.
+Inside the sandbox:
 
-`claude-home/` is re-bound read-only on top of the writable repo even here, so a
-session cannot plant state that auto-loads into later runs. It stays writable at
-`$HOME`, where it belongs.
+- **Writable:** the project, `claude-home/` at `$HOME`, and `/tmp` and
+  `/var/tmp` as 2 GiB tmpfs.
+- **Read-only from your real home:** `~/.claude/settings.json` and `CLAUDE.md`
+  (the same preferences and instructions as outside; shadowed by an empty file
+  when absent, so a session cannot create them), `~/.gitconfig`, `~/.local/bin`,
+  `~/.local/share/claude`, `~/.nvm` and the `claude` binary. Not the rest of
+  `~/.local`, which holds keyrings and app data.
+- **Read-only system:** `/usr` and a minimal `/etc` (DNS, TLS certificates,
+  passwd/group, timezone, alternatives, `ld.so` cache). Anything else a tool
+  expects under `/etc` is absent; Debian's OpenJDK, for one, wants
+  `/etc/java-*`.
+- **Environment cleared** (`--clearenv`): no `SSH_AUTH_SOCK`, `GITHUB_TOKEN`,
+  `AWS_*`, `DISPLAY`.
+- **Policy:** `managed-settings.json` is the top of the precedence chain, so
+  neither your `settings.json` nor a project `.claude/settings.json` can
+  override it. It turns on Claude Code's inner sandbox (`failIfUnavailable`,
+  no unsandboxed commands) and a strict network allowlist: unlisted domains
+  denied without a prompt, domains from project settings ignored, hooks and
+  sideloaded plugins or agents blocked from any scope a session can write to.
+  Edit the allowlist on the host and relaunch; `npm install` against an
+  unlisted registry fails until then. Preference keys do not belong in that
+  file: a managed key silently overrides the same key in your `settings.json`.
+- **Anti-persistence in the sandbox home:** `~/.claude/agents`, `commands`,
+  `hooks`, `skills`, `plugins`, `rules`, `output-styles`, `workflows` and
+  `themes` are 1 MiB tmpfs; `settings.local.json` and the shell rc files are
+  shadowed read-only. A deny-list: a name Claude Code starts auto-loading in a
+  future release is open until added here.
+- **The project's top-level `.git` is read-only:** `git` on the host runs
+  hooks, `core.hooksPath`, `core.fsmonitor`, `core.pager` and submodule hooks
+  unsandboxed. Inside, git reads fine and every write (`add`, `commit`,
+  `stash`, branches, `remote add`) fails loudly: do that from the host.
+- **Resources:** a systemd scope with `MemoryMax=8G`, `TasksMax=1024` and
+  `CPUWeight=25`. Raise them in the script if needed.
 
-Launching from a directory that merely contains the repo (`~/projects`, with the
-repo at `~/projects/bubbleclaude`) is safe: the repo is remounted read-only
-inside the writable project.
+Known gaps
+----------
 
-### Tests
+- **Project memory files are writable.** `CLAUDE.md`, `CLAUDE.local.md`,
+  `AGENTS.md`, `.claude/` and auto memory under
+  `~/.claude/projects/<project>/memory/` auto-load into later sessions of that
+  project, so a prompt-injected session can leave instructions for the next.
+  Deliberate: masking them would stop Claude keeping project notes. Read those
+  diffs, don't skim them.
+- **Write and Edit are not confined by the mounts.** Bash runs in the inner
+  sandbox, where all of `$HOME` is read-only; Write and Edit run in the CLI
+  process, where `claude-home/` is writable. Names under `~/.claude` that are
+  neither bound, shadowed nor masked (`routines/`, `keybindings.json`...)
+  persist into every later session, confirmed in the audit. Nothing there is
+  executable or on `PATH`. After a suspicious session, check from the host:
+  `find claude-home -newer claude-home/README.md -not -path '*/.claude/*'`.
+- **The session token is readable inside.** `~/.claude/.credentials.json` and
+  `~/.claude.json`, by any command, and the allowlist includes hosts that
+  accept uploads. It is the sandbox's token, not your host account's; treat it
+  as compromised if the session is.
+- **What you run on the host runs sandbox-written files.** A `Makefile`,
+  `package.json` scripts, `.vscode/tasks.json`, a `.envrc` execute with your
+  privileges the moment you invoke them outside. A nested repository's `.git`
+  is writable except `config` and a non-empty `hooks/`, pinned by the inner
+  sandbox (which also makes the clone undeletable from inside; `rm` it from
+  the host). Review before you build, test or `direnv allow`.
+- **VS Code: the bridge and workspace settings live on the host.** The IDE
+  server runs in the unsandboxed extension host; the CLI reaches it through a
+  localhost port and token in `claude-home/.claude/ide/`, for diagnostics,
+  Jupyter cell execution (always asks first), diffs and selections. And
+  `claudeCode.*` keys planted in `.vscode/settings.json` take effect on the
+  next launch, bounded by the environment filter. Read `.vscode/` diffs like
+  memory files.
+- **Network isolation comes from the inner sandbox, not bwrap.** `bclaude.sh`
+  re-shares the host network namespace, and with it abstract Unix sockets:
+  under X11, the X server (keylogging reach). The inner sandbox gives each
+  command a private netns with `AF_UNIX` refused; disable it and the vector is
+  back. Wayland's socket is a file that is not bound.
+- **No CPU or disk quota.** A runaway session can pin every idle core
+  (`CPUWeight` only makes it lose to your foreground work) and fill the
+  filesystem. The memory and task caps cannot be checked from inside; use
+  `systemctl --user show` on the scope.
+- **No SSH agent.** Use HTTPS remotes. Nothing authenticates you anyway: push
+  from the host.
+- **Mount points materialise in `claude-home/`.** A project under your home
+  leaves its empty directory chain there; the VS Code binary leaves one under
+  `claude-home/.vscode-server/`, pruned of removed versions at launch.
+  Harmless, shadowed at runtime, not on `PATH`.
+- **Same user, same kernel.** A namespace sandbox, not a VM: kernel exploits
+  are out of scope.
 
-What CI runs, reproducible locally with the same two commands. Needs
-[bats](https://github.com/bats-core/bats-core), `shellcheck`, `jq`, `bwrap` and
-unprivileged user namespaces.
+Tests and audit
+---------------
 
 ```sh
-tests/lint.sh                        # bash -n, shellcheck, jq on every script and JSON file
-BCLAUDE_TEST_NO_SYSTEMD=1 bats tests # policy invariants, refusals, the mount layout
+tests/lint.sh                        # bash -n, shellcheck, jq
+BCLAUDE_TEST_NO_SYSTEMD=1 bats tests # policy invariants, refusals, mount layout
 ```
 
-The layout files launch `bclaude.sh` for real with `CLAUDE_BIN=/bin/bash` and
-the updater disabled, against throwaway homes and projects, once per scenario
-in `setup_file`, and check what the sections above promise: remapped home,
-absent secrets, cleared environment, read-only masks, refused directories.
-Omit the variable where a systemd user session exists and `systemd-run` runs
-for real; the CI runners have none, so it swaps in a passthrough shim and the
-resource limits go untested.
+What CI runs. Needs [bats](https://github.com/bats-core/bats-core),
+`shellcheck`, `jq`, `bwrap` and unprivileged user namespaces. The layout tests
+launch `bclaude.sh` for real against throwaway homes and projects and check
+what this file promises. Omit the variable where a systemd user session
+exists; with it, `systemd-run` is shimmed and the resource limits go untested.
 
-What it protects against
-------------------------
-
-- Reading or exfiltrating anything outside the launch directory: `~/.ssh`,
-  `~/.aws`, browser profiles, your other repos.
-- Environment leaks: `--clearenv`, so `SSH_AUTH_SOCK`, `GITHUB_TOKEN`, `AWS_*`,
-  `DISPLAY` never get in.
-- Claude rewriting its own settings: `managed-settings.json` is bound read-only
-  at `/etc/claude-code/managed-settings.json`, the top of the precedence, so
-  neither your `~/.claude/settings.json` nor a project `.claude/settings.json`
-  can override it. Your own `settings.json` and `CLAUDE.md` are bound read-only
-  too, as a permissions and prompt-injection persistence channel otherwise. If
-  the repo sits inside the project it is remounted read-only.
-- Git hooks planted for the host: the project's `.git` is re-bound read-only
-  over the project, since `git commit` on the host runs `.git/hooks`, whatever
-  `core.hooksPath`, `core.fsmonitor` or `core.pager` point at in `.git/config`,
-  and the same under `.git/modules/*` for submodules, all unsandboxed. Inside,
-  git reads fine and every write (`add`, `commit`, `stash`, `checkout -b`,
-  `remote add`...) fails loudly. Only the top-level repository; see
-  "Constraints and limits".
-- Cross-session persistence in the sandbox home: `~/.claude/agents`, `commands`,
-  `hooks`, `skills`, `plugins`, `rules`, `output-styles`, `workflows` and
-  `themes` are 1 MiB tmpfs (nothing legitimate writes there, so a planted file
-  fails instead of silently vanishing at exit), and `settings.local.json` and
-  the shell rc files are shadowed by an empty read-only file. A deny-list, so a
-  name Claude Code starts auto-loading in a future release is open until added
-  here. The project directory and auto memory are not covered, see "Constraints
-  and limits".
-- Runaway resources: a systemd scope with `MemoryMax=8G` and `TasksMax=1024`,
-  and `/tmp` and `/var/tmp` as tmpfs capped at 2 GiB each. CPU is weighted
-  (`CPUWeight=25`: full speed when idle, yields to your other work under
-  contention) but not capped; disk is neither.
-- Defence in depth: Claude Code's inner sandbox with `failIfUnavailable: true`
-  and a strict network allowlist. `strictAllowlist` denies unlisted domains with
-  no prompt, `allowManagedDomainsOnly` ignores domains added from project
-  settings, and `allowManagedHooksOnly` / `disableSideloadFlags` block hooks and
-  sideloaded plugins or agents from any scope a session can write to.
-
-Layout
-------
-
-| Path                                | Role                                                                         |
-|-------------------------------------|------------------------------------------------------------------------------|
-| `bclaude.sh`                        | The whole tool: resolves `claude` on the host, updates it, `exec bwrap`      |
-| `bclaude-vscode.sh`                 | VS Code entry point: argv[1] becomes `CLAUDE_BIN`, no update, rest passes on |
-| `claude-home/`                      | Bound over `$HOME`; the only persistent state (OAuth, prefs, history)        |
-| `claude-home/.claude/settings.json` | Copy of `~/.claude/settings.json`, `{}` if absent, for the VS Code extension |
-| `managed-settings.json`             | Policy only, bound read-only as top-precedence managed settings              |
-| `examples/settings.json`            | Example preferences for `~/.claude/settings.json`; never bound               |
-| `examples/CLAUDE.md`                | Example global instructions for `~/.claude/CLAUDE.md`; never bound           |
-
-Also bound read-only from your real home: `~/.claude/settings.json` and
-`~/.claude/CLAUDE.md` (your preferences and global instructions, the same as
-outside the sandbox; absent files are shadowed by an empty one so a session
-cannot create them; `~/.claude/settings.local.json` is never bound and always
-shadowed), `~/.gitconfig`, `~/.local/bin`, `~/.local/share/claude` and
-`~/.nvm` (so a host `claude` and its runtime resolve; not all of `~/.local`,
-which holds keyrings and app data), plus the `claude` binary in use.
-
-Network: edit `managed-settings.json` on the host. The list is strict, so
-`npm install` or `pip install` against an unlisted registry fails until you add
-it and relaunch. Preference keys do not belong there: anything in the managed
-file silently overrides the same key in your `~/.claude/settings.json`.
-
-Constraints and limits
-----------------------
-
-- **Network isolation comes from the inner sandbox, not bwrap.** `bclaude.sh`
-  re-shares the host network namespace, and with it abstract-namespace Unix
-  sockets; under X11 that includes the X server, which means keylogging reach.
-  The inner sandbox closes it: each command gets a private netns with loopback
-  only and `AF_UNIX` refused. Disable the inner sandbox and the vector is back.
-  Wayland's socket is a file in `XDG_RUNTIME_DIR`, which is not bound; check
-  with `echo $XDG_SESSION_TYPE`.
-- **No SSH agent.** `SSH_AUTH_SOCK` is not passed; use HTTPS remotes (github.com
-  is allowlisted). Nothing authenticates you anyway: commit and push from the
-  host.
-- **One writable directory, one project per session.** Anything Claude must read
-  lives under the launch directory or a bound path. Two projects, two sandboxes.
-- **Project memory files are writable.** `CLAUDE.md`, `CLAUDE.local.md`,
-  `AGENTS.md` and `.claude/` auto-load into later sessions of that project and
-  nothing masks them, so a prompt-injected session can leave instructions for
-  the next. Deliberate: masking them would stop Claude keeping project notes.
-  The same goes for auto memory under `~/.claude/projects/<project>/memory/`,
-  which is per project and writable by design. Read those diffs, don't skim
-  them.
-- **What you run on the host runs sandbox-written files.** The sandbox ends at
-  the project mount: a `Makefile`, `package.json` scripts, `.vscode/tasks.json`,
-  a `.envrc`, most of a nested repository's `.git` are all writable inside and
-  execute with your privileges the moment you invoke them outside. The
-  top-level `.git` is pinned read-only in full, because git runs hooks and
-  config from it implicitly; in a nested repository only `.git/config` and a
-  non-empty `.git/hooks` are pinned, by Claude Code's inner sandbox, and a
-  clone can then no longer be deleted from inside (`rm -rf` hits the pin with
-  EBUSY; delete it from the host). Inside, the top-level pin also means
-  anything that writes git state (`add`, `commit`, `stash`, branches,
-  `remote add`, `config`) fails on this repo: do that from the host. Review
-  the rest before you build, test or `direnv allow` on the host.
-- **File-writing tools are not confined by the mounts.** Bash runs in Claude
-  Code's inner sandbox, where all of `$HOME` is read-only; the Write and Edit
-  tools run in the CLI process, where `claude-home/` is bound writable. Names
-  under `~/.claude` that are neither bound, shadowed nor tmpfs-masked
-  (`routines/`, `keybindings.json`...) are writable through those tools and
-  persist into every later session, confirmed end-to-end in the audit. Nothing
-  there is executable or on `PATH`. After a suspicious session, check from the
-  host: `find claude-home -newer claude-home/README.md -not -path '*/.claude/*'`.
-- **The session token is readable inside.** `~/.claude/.credentials.json` and
-  `~/.claude.json` are readable by any command, and the allowlist includes hosts
-  that accept data. The token is scoped to the sandbox session, not your host
-  account; treat it as compromised if the session is.
-- **The VS Code bridge lives on the host.** The extension's IDE server runs in
-  the unsandboxed extension host; the CLI reaches it through a localhost port and
-  token read from `claude-home/.claude/ide/`. The model sees two of its tools,
-  diagnostics and Jupyter cell execution (which always asks first); the rest is
-  RPC the CLI drives for its own UI, diffs and selections included. Still a
-  channel into the editor that bwrap does not cover.
-- **Workspace extension settings are writable by the session.** The wrapper
-  setting is machine-scoped, but other `claudeCode.*` keys planted in
-  `.vscode/settings.json` take effect on the next launch. The environment filter
-  in `bclaude.sh` bounds that. Read `.vscode/` diffs like memory files.
-- **Mount points materialise in `claude-home/`.** A project under your real home
-  leaves its empty directory chain in the sandbox home (`~/work/myproject` →
-  `claude-home/work/myproject`); the VS Code binary bind leaves one under
-  `claude-home/.vscode-server/` (or `.vscode/`, `.cursor-server/`: whichever
-  `extensions/` directory the binary came from), and the launcher prunes those
-  of extension versions the editor has since removed. Harmless, shadowed at
-  runtime.
-  Neither is on `PATH`: the binary's directory is added only under `~/.nvm`
-  (read-only, and `node` must be found beside it), and `~/.local/bin` only
-  when bound from your real home.
-- **`--new-session` drops the controlling terminal** (TIOCSTI defence); the
-  process reports "not a tty". If it ever breaks the TUI, revisit that flag.
-- **Minimal `/etc`.** DNS, TLS certificates, passwd/group, timezone, the
-  alternatives links and the `ld.so` cache only. Anything else a tool reads
-  from `/etc` is absent: Debian's OpenJDK, for one, expects `/etc/java-*`.
-- **This repo is read-only inside** unless it is the project itself (see
-  "Working on bubbleclaude itself"). Your global `CLAUDE.md` and `settings.json`
-  are edited from outside. `claude-home/` is read-only from the project side in
-  every configuration.
-- **Fixed limits, with gaps.** 8 GiB memory, 1024 tasks, 2 GiB `/tmp` and
-  `/var/tmp`; raise them in the script if needed. No CPU or disk quota: a
-  runaway session can still pin every core on an idle host (`CPUWeight=25`
-  only makes it lose to your foreground work) and fill the filesystem. The caps
-  cannot be checked from inside (no cgroupfs); use `systemctl --user show` on
-  the scope. The hostname inside is `bubbleclaude`.
-- **Same user, same kernel.** A namespace sandbox, not a VM: kernel exploits are
-  out of scope.
-
-Security audit
---------------
-
-Audited from inside live sessions on 2026-08-16 and 2026-10-16, eleven
-boundaries probed with non-destructive checks:
-[`pentest-prompt.md`](pentest-prompt.md) drove it,
-[`pentest-report.md`](pentest-report.md) records evidence, classification and
-severity per boundary.
-
-Ten boundaries came out contained; resource limits are mixed (memory and tasks
-capped, CPU weighted, disk neither). The one violation is partial, persistence:
-the file-writing tools above, confirmed to persist into later sessions, and the
-project memory files, which are deliberate. Those, the readable token and the
-missing CPU and disk quotas are listed under "Constraints and limits". The
-proposed fixes were reviewed and declined, with each trade-off recorded in the
-report; what the audit found cheap to close has been (no writable directory on
-`PATH`, the in-sandbox updater off). The audit also corrected this README on
-three points: the network namespace is private in practice, egress is blocked by
-an empty routing table before the proxy allowlist applies, so there is no
-IP-literal or raw-socket bypass, and a nested repository's `.git/config` and
-hooks are pinned by the inner sandbox.
+Audited from inside live sessions on 2026-08-16 and 2026-10-16: eleven
+boundaries driven by [`pentest-prompt.md`](pentest-prompt.md), evidence in
+[`pentest-report.md`](pentest-report.md). Ten boundaries contained, resource
+limits mixed, one partial violation: persistence, through the writable tools
+and project memory files above. The proposed fixes were reviewed and declined,
+each trade-off recorded in the report.
