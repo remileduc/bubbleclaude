@@ -15,6 +15,14 @@ setup_file() {
     HOST_NS="$(readlink /proc/self/ns/mnt)"
     probe main "$REPO/bclaude.sh" "$HOME1" "$SH" "$PROJ" \
         "$PROJ/smoke" "$PROJ/.git/smoke" "$PROJ/.git/hooks/smoke" "$PROJ/.git/config"
+    # Own fixtures: a second launch on $SH/$PROJ would rewrite the host state
+    # the tests above read. stderr kept apart so a warning cannot fail the match.
+    mkdir -p "$BATS_FILE_TMPDIR/sh2" "$BATS_FILE_TMPDIR/proj2"
+    # shellcheck disable=SC2016 # the literal is the point
+    launch "$REPO/bclaude.sh" "$HOME1" "$BATS_FILE_TMPDIR/sh2" "$BATS_FILE_TMPDIR/proj2" \
+        -c 'printf %s "$1"' x '${GITHUB_TOKEN}' \
+        > "$BATS_FILE_TMPDIR/verbatim.out" 2> "$BATS_FILE_TMPDIR/verbatim.err" \
+        || { cat "$BATS_FILE_TMPDIR/verbatim.err" >&2; return 1; }
 }
 
 @test "mount namespace differs from the host" {
@@ -27,6 +35,8 @@ setup_file() {
 @test "GITHUB_TOKEN dropped" { is main env_GITHUB_TOKEN unset; }
 @test "ANTHROPIC_API_KEY dropped" { is main env_ANTHROPIC_API_KEY unset; }
 @test "DISPLAY dropped" { is main env_DISPLAY unset; }
+@test "XDG_RUNTIME_DIR dropped" { is main env_XDG_RUNTIME_DIR unset; }
+@test "DBUS_SESSION_BUS_ADDRESS dropped" { is main env_DBUS_SESSION_BUS_ADDRESS unset; }
 @test "DISABLE_TELEMETRY forwarded" { is main env_DISABLE_TELEMETRY 1; }
 @test "CLAUDE_CONFIG_DIR rewritten to the sandbox ~/.claude" {
     is main env_CLAUDE_CONFIG_DIR "$HOME1/.claude"
@@ -69,6 +79,12 @@ setup_file() {
 # bwrap leaves 0-byte mount-point files behind; content is what must not persist.
 @test "host: settings.local.json mount point stays empty" {
     [ ! -s "$SH/.claude/settings.local.json" ]
+}
+# systemd-run >= 258 expands ${VAR} in the payload from the host environment
+# unless told not to. Shimmed, the shim refuses a launch without the flag.
+@test "arguments reach claude verbatim, no host expansion" {
+    # shellcheck disable=SC2016 # the literal is the point
+    [ "$(cat "$BATS_FILE_TMPDIR/verbatim.out")" = '${GITHUB_TOKEN}' ]
 }
 @test "host: settings.json copied into the sandbox home" {
     [ "$(cat "$SH/.claude/settings.json")" = '{"host":true}' ]

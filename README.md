@@ -17,7 +17,7 @@ Requirements
 ------------
 
 - Linux with `bwrap` (`apt install bubblewrap`) and a systemd user session (for
-  the resource limits).
+  the resource limits), systemd 254 or later for `--expand-environment=no`.
 - A usr-merged layout (`/bin`, `/lib`... symlinked into `/usr`), standard on
   current Debian and derivatives.
 - Claude Code on the host, on `PATH` under a bound path: `/usr/...`,
@@ -165,7 +165,10 @@ Inside the sandbox:
   unsandboxed. Inside, git reads fine and every write (`add`, `commit`,
   `stash`, branches, `remote add`) fails loudly: do that from the host.
 - **Resources:** a systemd scope with `MemoryMax=8G`, `TasksMax=1024` and
-  `CPUWeight=25`. Raise them in the script if needed.
+  `CPUWeight=25`. Raise them in the script if needed. The scope is started
+  with `--expand-environment=no`: since systemd 258 `systemd-run` otherwise
+  fills `${VAR}` in its arguments, a prompt or a path, from the host
+  environment before `--clearenv` runs.
 
 Known gaps
 ----------

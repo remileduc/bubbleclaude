@@ -312,6 +312,10 @@ BWRAP_ARGS+=(
     --chdir "$PROJECT"
 )
 
-exec systemd-run --user --scope -q -p MemoryMax=8G -p TasksMax=1024 -p CPUWeight=25 \
+# systemd-run >= 258 substitutes ${VAR} in its argv from the HOST environment,
+# before --clearenv: a claude prompt quoting ${GITHUB_TOKEN} would leak it and a
+# bind path containing `$` would reshape the mount layout. Needs systemd 254+.
+exec systemd-run --user --scope -q --expand-environment=no \
+    -p MemoryMax=8G -p TasksMax=1024 -p CPUWeight=25 \
     bwrap "${BWRAP_ARGS[@]}" "$CLAUDE_BIN_REAL" "$@" \
     7</dev/null 8</dev/null 9</dev/null

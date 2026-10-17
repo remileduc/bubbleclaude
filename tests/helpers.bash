@@ -11,8 +11,12 @@ systemd_shim() {
     export BIN="$BATS_FILE_TMPDIR/bin"
     mkdir -p "$BIN"
     if [ "${BCLAUDE_TEST_NO_SYSTEMD:-0}" = 1 ]; then
+        # The shim drops the options, so it pins the one that is a security
+        # control: without it the ${VAR} expansion of systemd >= 258 returns.
         cat > "$BIN/systemd-run" <<'SHIM'
 #!/bin/sh
+case " $* " in *" --expand-environment=no "*) ;;
+    *) echo "systemd-run shim: --expand-environment=no missing" >&2; exit 1;; esac
 while [ $# -gt 0 ] && [ "$1" != bwrap ]; do shift; done
 exec "$@"
 SHIM
@@ -46,8 +50,8 @@ r ns "$(readlink /proc/self/ns/mnt)"
 r home "$HOME"
 r pwd "$PWD"
 r hostname "$(cat /proc/sys/kernel/hostname)"
-for v in SSH_AUTH_SOCK GITHUB_TOKEN ANTHROPIC_API_KEY DISPLAY DISABLE_TELEMETRY CLAUDE_CONFIG_DIR \
-         DISABLE_AUTOUPDATER PATH; do
+for v in SSH_AUTH_SOCK GITHUB_TOKEN ANTHROPIC_API_KEY DISPLAY XDG_RUNTIME_DIR \
+         DBUS_SESSION_BUS_ADDRESS DISABLE_TELEMETRY CLAUDE_CONFIG_DIR DISABLE_AUTOUPDATER PATH; do
     r "env_$v" "${!v-unset}"
 done
 r capbnd "$(awk "/^CapBnd:/ {print \$2}" /proc/self/status)"
@@ -79,6 +83,8 @@ for p in "$@"; do r "w_$p" "$(w "$p")"; done
 # TEST_CLAUDE_BIN stands in for the binary; it must behave like bash, and
 # DISABLE_AUTOUPDATER keeps the script from running `bash update` on it: `yes`
 # rather than `1`, so the forced value inside is told apart from forwarding.
+# systemd-run --user finds the bus through XDG_RUNTIME_DIR or
+# DBUS_SESSION_BUS_ADDRESS: the host's values go through, canaries otherwise.
 launch() {
     local script="$1" home="$2" sandbox="$3" project="$4"
     shift 4
@@ -86,7 +92,9 @@ launch() {
         DISABLE_AUTOUPDATER=yes
         USER="${USER:-$(id -un)}" SSH_AUTH_SOCK=/leak GITHUB_TOKEN=leak
         ANTHROPIC_API_KEY=leak DISPLAY=:0 DISABLE_TELEMETRY=1
-        CLAUDE_CONFIG_DIR=/elsewhere)
+        CLAUDE_CONFIG_DIR=/elsewhere
+        XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/leak}"
+        DBUS_SESSION_BUS_ADDRESS="${DBUS_SESSION_BUS_ADDRESS:-unix:path=/leak}")
     [ "$sandbox" = - ] || vars+=(SANDBOX_HOME="$sandbox")
     (cd "$project" && env -i "${vars[@]}" "$script" "$@")
 }
