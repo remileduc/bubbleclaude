@@ -120,6 +120,25 @@ each harmless under a hostile value: never `ANTHROPIC_*` or credentials, and
 preferences go in the `env` block of `~/.claude/settings.json`. Check with
 `CLAUDE_BIN=/usr/bin/env bclaude`.
 
+**Turn off automatic port forwarding.** The inner sandbox routes its network
+allowlist through a proxy on a random `127.0.0.1` port, one per session, on
+the host side of bwrap. VS Code treats it as an application port. In `process`
+mode it forwards every one of them, and a port still open when the window
+closes is restored at the next open and never released. After twenty, VS Code
+switches itself to `hybrid`, which instead forwards any `localhost:port`
+printed in a terminal, including by Claude. Set this in the **user** settings
+of the VS Code client (the Windows side under WSL), then clear the leftovers
+once from the Ports view (select all, **Stop Forwarding Port**):
+
+```json
+{ "remote.autoForwardPorts": false }
+```
+
+Manual forwarding and clicking a link in the terminal still forward on demand.
+Under WSL nothing is lost: `wslrelay.exe` already mirrors every WSL listener,
+the proxy included, onto Windows loopback, so the proxy is reachable by any
+process on the Windows machine for as long as the session runs.
+
 How it works
 ------------
 
