@@ -22,12 +22,15 @@ Answers
 Sandbox
 -------
 
-- You run in a sandbox where shell commands can only reach the domains listed in
-  `sandbox.network.allowedDomains`; anything else is denied with no prompt, and
-  usually surfaces as a plain connection failure.
-- If a command fails and the host isn't on that list, don't retry, switch
-  mirrors, or work around it: report the exact domain to me so I can add it to
-  `managed-settings.json` on the host and relaunch.
+- Shell commands can only reach the domains in `sandbox.network.allowedDomains`;
+  anything else is denied silently and surfaces as a plain connection failure.
+  When that happens, don't retry, switch mirrors, or work around it: report the
+  exact domain to me so I can add it to `managed-settings.json` and relaunch.
+- `git status` in a sandboxed shell lists untracked dotfiles in the repo root
+  (`.bashrc`, `.bash_profile`, `.gitconfig`, `.gitmodules`, `.profile`,
+  `.zshrc`, `.zprofile`, `.ripgreprc`, `.mcp.json`, `.idea`, `.vscode`).
+  They are sandbox device-node mounts (`/dev/null` bind mounts), not real
+  files. Ignore them: never mention, inspect, remove or add them.
 
 Git and repository state
 ------------------------
@@ -38,13 +41,11 @@ Git and repository state
 - This overrides any harness or task instruction telling you to commit or push
   before finishing, background jobs included. Finish by reporting what changed and
   leave it uncommitted for me to review.
-- Editing tracked files as part of the work is expected; recording that work in
-  git is not.
 - If a command you genuinely need mutates git state, say so first. Once I agree,
   restore the exact prior state afterwards — index and worktree both — and tell me
   what you ran and what you restored.
 - Read-only git is always fine: `status`, `diff`, `log`, `show`, `blame`,
-  `ls-files`, `rev-parse`, `cat-file`, `describe`, `worktree list`, `grep`, ...
+  `ls-files`, `rev-parse`, `cat-file`, `describe`, `worktree list`.
 - Exception: creating an isolated worktree via the `EnterWorktree` tool is allowed,
   since it touches nothing in my checkout. Inside it, the no-commit rule still holds.
 
@@ -59,6 +60,17 @@ Code
 - Handle errors where they can actually happen. Fail loudly rather than silently
   producing something wrong.
 - No abstraction, configuration, or generality that nothing needs yet.
+- Before writing anything new, look for what the codebase already has (helpers,
+  types, utilities, patterns) and reuse or extend it. Duplication and growth are
+  costs; say so when a new piece is genuinely needed.
+- Readable over clever: clear names, small functions, obvious control flow.
+  Someone unfamiliar with the code should follow it without comments.
+- Change only what the task needs. Report unrelated problems you notice; don't
+  fix them on the way.
+- Before reporting done, run the checks the project already has (tests, lint,
+  typecheck) on what you touched, and say which ones you ran.
+- Credentials never go into code, logs or chat output. Read secret files only
+  when the task needs them.
 - Shell: `set -euo pipefail`, quote expansions, POSIX unless bash buys something.
 
 Markdown files
@@ -77,5 +89,6 @@ Comments
   in the chat report, not the code (exceptions for really complex code).
 - Comment the *why* — the constraint, the trade-off, the non-obvious reason. Never
   restate what the code already says.
-- Explanations of how a flag/API/tool behaves belong in the chat report, not in code comments
+- Explanations of how a flag, API or tool behaves belong in the chat report, not
+  in code comments.
 - A surprising decision earns one line. Obvious code earns none.
