@@ -190,6 +190,9 @@ fi
 # writable directory in the persistent home that later sessions resolve through.
 LOCAL_BIN=
 [ ! -d "$REAL_HOME/.local/bin" ] || LOCAL_BIN="$HOME/.local/bin:"
+# Same rule for pnpm's bin dir. Last: its global-package shims must not shadow /usr.
+PNPM_BIN=
+[ ! -d "$REAL_HOME/.local/share/pnpm/bin" ] || PNPM_BIN=":$HOME/.local/share/pnpm/bin"
 # The binary's dir on PATH only under nvm, where the node its shebang needs sits
 # beside it: elsewhere (~/.vscode-server) its mount point is a writable dir in $HOME.
 BIN_PATH=
@@ -214,7 +217,7 @@ BWRAP_ARGS=(
     # Start empty, else SSH_AUTH_SOCK, GITHUB_TOKEN, AWS_*, DISPLAY leak in.
     --clearenv
     --setenv HOME "$HOME"
-    --setenv PATH "$BIN_PATH$LOCAL_BIN/usr/local/bin:/usr/bin:/usr/sbin:/bin:/sbin"
+    --setenv PATH "$BIN_PATH$LOCAL_BIN/usr/local/bin:/usr/bin:/usr/sbin:/bin:/sbin$PNPM_BIN"
     --setenv TERM "${TERM:-xterm-256color}"
     --setenv LANG "${LANG:-C.UTF-8}"
     --setenv USER "${USER:-$(id -un)}"
@@ -258,6 +261,9 @@ BWRAP_ARGS=(
     --ro-bind-try "$REAL_HOME/.config/git/config" "$HOME/.config/git/config"
     --ro-bind-try "$REAL_HOME/.local/bin" "$HOME/.local/bin"
     --ro-bind-try "$REAL_HOME/.local/share/claude" "$HOME/.local/share/claude"
+    # All of PNPM_HOME: bin/ only holds shims into global/. Never writable, it
+    # holds the store every host project links from.
+    --ro-bind-try "$REAL_HOME/.local/share/pnpm" "$HOME/.local/share/pnpm"
     --ro-bind-try "$REAL_HOME/.nvm" "$HOME/.nvm"
     # The binary alone, never its directory.
     --ro-bind "$CLAUDE_BIN_REAL" "$CLAUDE_BIN_REAL"

@@ -11,10 +11,12 @@ setup_file() {
     export BINDIR="$HOME1/.vscode-server/extensions/ext/resources/native-binary"
     export NVMDIR="$HOME1/.nvm/versions/node/v1/bin"
     host_home "$HOME1"
-    mkdir -p "$SH" "$PROJ" "$BINDIR" "$NVMDIR" "$HOME1/.local/bin"
+    export PNPMDIR="$HOME1/.local/share/pnpm"
+    mkdir -p "$SH" "$PROJ" "$BINDIR" "$NVMDIR" "$HOME1/.local/bin" "$PNPMDIR/bin" \
+        "$PNPMDIR/global" "$PNPMDIR/store"
     cp /bin/bash "$BINDIR/claude"
     cp /bin/bash "$NVMDIR/claude"
-    touch "$HOME1/.local/bin/host-tool"
+    touch "$HOME1/.local/bin/host-tool" "$PNPMDIR/bin/pnpm" "$PNPMDIR/global/shim-target"
     # Two older versions' stub chains, as bwrap leaves them behind: prev-ext is
     # still installed on the host (another window may run it), old-ext is gone.
     mkdir -p "$HOME1/.vscode-server/extensions/prev-ext"
@@ -23,7 +25,7 @@ setup_file() {
         : > "$SH/.vscode-server/extensions/$v/resources/native-binary/claude"
     done
     TEST_CLAUDE_BIN="$BINDIR/claude" probe home "$REPO/bclaude.sh" "$HOME1" "$SH" "$PROJ" \
-        "$HOME1/.local/bin/smoke"
+        "$HOME1/.local/bin/smoke" "$PNPMDIR/bin/smoke" "$PNPMDIR/store/smoke"
     TEST_CLAUDE_BIN="$NVMDIR/claude" probe nvm "$REPO/bclaude.sh" "$HOME1" "$SH" "$PROJ" \
         "$NVMDIR/smoke"
 }
@@ -58,6 +60,16 @@ symlinked_stubs() {
     [[ "$(rv home env_PATH)" == "$HOME1/.local/bin:"* ]]
 }
 @test "~/.local/bin bound read-only from the host" { is home "w_$HOME1/.local/bin/smoke" no; }
+@test "pnpm bin dir last on PATH when the host has one" {
+    [[ "$(rv home env_PATH)" == *":$PNPMDIR/bin" ]]
+}
+@test "pnpm bin dir bound read-only from the host" { is home "w_$PNPMDIR/bin/smoke" no; }
+@test "pnpm store read-only" { is home "w_$PNPMDIR/store/smoke" no; }
+@test "pnpm shim targets under global/ are visible" {
+    # shellcheck disable=SC2016 # expanded inside the sandbox, not here
+    TEST_CLAUDE_BIN="$BINDIR/claude" run -0 launch "$REPO/bclaude.sh" "$HOME1" "$SH" "$PROJ" \
+        -c '[ -e "$1" ]' probe "$PNPMDIR/global/shim-target"
+}
 @test "host: sandbox home holds only the mount-point stub" {
     local stub="$SH/.vscode-server/extensions/ext/resources/native-binary"
     [ "$(ls -A "$stub")" = claude ]

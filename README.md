@@ -157,8 +157,10 @@ Inside the sandbox:
 - **Read-only from your real home:** `~/.claude/settings.json` and `CLAUDE.md`
   (the same preferences and instructions as outside; shadowed by an empty file
   when absent, so a session cannot create them), `~/.gitconfig`, `~/.local/bin`,
-  `~/.local/share/claude`, `~/.nvm` and the `claude` binary. Not the rest of
-  `~/.local`, which holds keyrings and app data.
+  `~/.local/share/claude`, `~/.local/share/pnpm` (the pnpm install, its global
+  packages and its store, so every package your host projects use is readable),
+  `~/.nvm` and the `claude` binary. Not the rest of `~/.local`, which holds
+  keyrings and app data.
 - **Read-only system:** `/usr` and a minimal `/etc` (DNS, TLS certificates,
   passwd/group, timezone, alternatives, `ld.so` cache). Anything else a tool
   expects under `/etc` is absent; Debian's OpenJDK, for one, wants

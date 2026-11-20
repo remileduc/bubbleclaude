@@ -47,6 +47,9 @@ setup_file() {
 @test "PATH omits ~/.local/bin when the host has none" {
     [[ "$(rv main env_PATH)" != *"/.local/bin"* ]]
 }
+@test "PATH omits pnpm's bin dir when the host has none" {
+    [[ "$(rv main env_PATH)" != *"/.local/share/pnpm"* ]]
+}
 @test "real home absent" { is main host_secret no; }
 @test "sandbox home mounted at HOME" { is main sandbox_canary yes; }
 @test "/etc/shadow absent" { is main etc_shadow no; }
