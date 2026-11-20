@@ -11,13 +11,6 @@ setup_file() {
     mkdir -p "$SH/sub" "$PROJ"
 }
 
-# refused <home> <sandbox-home> <project> <message>
-refused() {
-    run -1 launch "$REPO/bclaude.sh" "$1" "$2" "$3" -c 'echo ESCAPED'
-    [[ $output == *"$4"* ]]
-    [[ $output != *ESCAPED* ]]
-}
-
 @test "refuses /" { refused "$HOME1" "$SH" / refusing; }
 @test "refuses the real home" { refused "$HOME1" "$SH" "$HOME1" "holds your real home"; }
 @test "refuses a parent of the real home" {

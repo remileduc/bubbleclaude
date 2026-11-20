@@ -1,17 +1,20 @@
 Examples
 ========
 
-Nothing in this directory is used by `bclaude.sh`. These files show what your
-own `~/.claude/` can hold; the script binds your real files from there,
-read-only, into the sandbox.
+Nothing in this directory is used by `bclaude.sh`. The first two files show
+what your own `~/.claude/` can hold; the script binds your real files from
+there, read-only, into the sandbox. The third holds the script's own options
+and stays on the host.
 
-| File            | Copy to                   | What it is                                |
-|-----------------|---------------------------|-------------------------------------------|
-| `settings.json` | `~/.claude/settings.json` | Preferences: model, effort, theme, TUI    |
-| `CLAUDE.md`     | `~/.claude/CLAUDE.md`     | Global instructions, loaded every session |
+| File            | Copy to                    | What it is                                |
+|-----------------|----------------------------|-------------------------------------------|
+| `settings.json` | `~/.claude/settings.json`  | Preferences: model, effort, theme, TUI    |
+| `CLAUDE.md`     | `~/.claude/CLAUDE.md`      | Global instructions, loaded every session |
+| `bclaude.conf`  | `~/.config/bclaude/config` | Options of `bclaude.sh`, per project too  |
 
 Copy whichever you want, then edit to taste. A missing file is fine: the sandbox
-shadows the path with an empty one so a session cannot create it.
+shadows the first two paths with an empty file so a session cannot create them,
+and without the third every option keeps its default.
 
 Why two settings files
 ----------------------

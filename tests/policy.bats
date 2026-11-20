@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-# The two files that define the cage and need no sandbox to check:
+# The files that define the cage and need no sandbox to check:
 # managed-settings.json stays policy-only with the inner sandbox on, and
 # claude-home/ (OAuth tokens) stays out of git.
 
@@ -40,6 +40,15 @@ setup() {
     bad="$(jq -r '.sandbox.network.allowedDomains[]
         | select(startswith("*") and (split(".") | length) < 3)' "$M")"
     [ -z "$bad" ] || { echo "overbroad: $bad"; return 1; }
+}
+
+# The example is the options' only reference: one added to the script alone
+# is undocumented, one left in the example alone is silently ignored.
+@test "examples/bclaude.conf lists exactly the script's options" {
+    known="$(sed -n '/^OPTIONS=(/,/^)/p' bclaude.sh | grep -oE '[A-Z][A-Z_]+' | grep -vx OPTIONS | sort)"
+    listed="$(grep -oE '^#[A-Z][A-Z_]+=' examples/bclaude.conf | tr -d '#=' | sort)"
+    [ -n "$known" ]
+    [ "$known" = "$listed" ] || { diff <(echo "$known") <(echo "$listed"); return 1; }
 }
 
 @test "claude-home/ tracks only its README" {

@@ -11,7 +11,8 @@ set -euo pipefail
 
 cd "$(dirname "$(dirname "$(readlink -f "$0")")")"
 
-bash -n bclaude.sh bclaude-vscode.sh tests/*.sh tests/helpers.bash
-shellcheck bclaude.sh bclaude-vscode.sh tests/*.sh tests/helpers.bash tests/*.bats
+bash -n bclaude.sh bclaude-vscode.sh tests/*.sh tests/helpers.bash examples/bclaude.conf
+shellcheck bclaude.sh bclaude-vscode.sh tests/*.sh tests/helpers.bash tests/*.bats \
+    examples/bclaude.conf
 jq empty managed-settings.json examples/settings.json
 echo "lint ok"

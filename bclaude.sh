@@ -9,6 +9,8 @@
 #
 # Usage: cd /path/to/project && bclaude.sh [claude args...]
 # The launch directory is the project, and the only writable place inside.
+# Every argument is claude's. The script's own options come from the
+# environment, then from ~/.config/bclaude/config: see examples/bclaude.conf.
 # CLAUDE_BIN=/path/to/claude overrides the PATH lookup (bclaude-vscode.sh).
 # SANDBOX_HOME=/path overrides the fake home (default: claude-home/ in the repo).
 #
@@ -19,17 +21,99 @@ set -eufo pipefail
 
 die() { echo "$*" >&2; exit 1; }
 
+# config_error <source> <line>: a failing last line that set -e exempts (an &&
+# list) fails `source` itself, so the trap then reports this script, not the file.
+config_error() {
+    [ "$1" = "$CONFIG" ] || die "config error: $CONFIG ended with a failing command"
+    die "config error at $1:$2"
+}
+
 # readlink -f: $0 may be a symlink, and binds must resolve against the real repo.
 BCLAUDE_PATH="$(dirname "$(readlink -f "$0")")"
 REAL_HOME="$(realpath "$HOME")"
+# Canonical: a symlinked launch path would not exist inside the sandbox.
+PROJECT="$(realpath "$PWD")"
+# Bound writable on top of everything else, a parent of the real home would
+# resolve $HOME back to your real files. "/" never matches "$PROJECT"/*.
+case "$REAL_HOME" in
+    "$PROJECT"|"$PROJECT"/*) die "refusing: $PROJECT holds your real home directory" ;;
+esac
+[ "$PROJECT" != / ] || die "refusing: / is not a project directory"
+
+# Sourced, so it is host code: checked before it runs, because under the
+# project or a sandbox home a session would write its own next launch.
+CONFIG_DIR="$(realpath -m "${XDG_CONFIG_HOME:-$REAL_HOME/.config}/bclaude")"
+CONFIG="$(realpath -m "$CONFIG_DIR/config")"
+# The config file can read these, and they are checked again after it ran:
+# assigning one there must fail, not skip a refusal.
+readonly BCLAUDE_PATH REAL_HOME PROJECT CONFIG_DIR CONFIG
+for path in "$CONFIG_DIR" "$CONFIG"; do
+    case "$path" in
+        "$PROJECT"|"$PROJECT"/*)
+            die "refusing: $PROJECT holds the bclaude config ($path)" ;;
+    esac
+done
+# The default too: launches without the variable write there. A sandbox home
+# the file itself sets is only known, and checked, once it has run.
+for home in "$BCLAUDE_PATH/claude-home" ${SANDBOX_HOME:+"$SANDBOX_HOME"}; do
+    home="$(realpath -m "$home")"
+    case "$REAL_HOME" in
+        # Named first: the config under your home would otherwise take the blame.
+        "$home"|"$home"/*) die "refusing: sandbox home $home holds your real home" ;;
+    esac
+    for path in "$CONFIG_DIR" "$CONFIG"; do
+        case "$path" in
+            "$home"|"$home"/*)
+                die "refusing: $path is inside the sandbox home ($home)" ;;
+        esac
+    done
+done
+# Every option the config file may set. The environment wins over the file.
+OPTIONS=(
+    SANDBOX_HOME CLAUDE_BIN DISABLE_AUTOUPDATER
+    BCLAUDE_MANAGED_SETTINGS BCLAUDE_CLAUDE_MD
+    BCLAUDE_MEMORY_MAX BCLAUDE_TASKS_MAX BCLAUDE_CPU_WEIGHT BCLAUDE_TMP_SIZE
+    BCLAUDE_GITCONFIG BCLAUDE_LOCAL_BIN BCLAUDE_NVM BCLAUDE_PNPM
+)
+if [ -e "$CONFIG" ]; then
+    FROM_ENV=()
+    for name in "${OPTIONS[@]}"; do
+        if [ "${!name+set}" ]; then FROM_ENV+=("$name" "${!name}"); fi
+    done
+    # set -e alone ends the launch without a word when the file's last line fails.
+    trap 'config_error "${BASH_SOURCE[0]}" "$LINENO"' ERR
+    # shellcheck source=/dev/null
+    source "$CONFIG"
+    trap - ERR
+    for ((i = 0; i < ${#FROM_ENV[@]}; i += 2)); do
+        printf -v "${FROM_ENV[i]}" %s "${FROM_ENV[i + 1]}"
+    done
+fi
+# systemd scope limits. The tmpfs cap is in bytes: bwrap takes no suffix.
+: "${BCLAUDE_MEMORY_MAX:=8G}" "${BCLAUDE_TASKS_MAX:=1024}" "${BCLAUDE_CPU_WEIGHT:=25}"
+: "${BCLAUDE_TMP_SIZE:=2147483648}"
+: "${BCLAUDE_GITCONFIG:=1}" "${BCLAUDE_LOCAL_BIN:=1}" "${BCLAUDE_NVM:=1}" "${BCLAUDE_PNPM:=1}"
+# A typo must not pick a side, and must stop the launch before it acts on the host.
+for name in BCLAUDE_GITCONFIG BCLAUDE_LOCAL_BIN BCLAUDE_NVM BCLAUDE_PNPM; do
+    case "${!name}" in
+        0|1) ;;
+        *) die "$name must be 0 or 1, not '${!name}'" ;;
+    esac
+done
+
 SANDBOX_HOME="$(realpath -m "${SANDBOX_HOME:-$BCLAUDE_PATH/claude-home}")"
 # Policy only, bound as managed settings: no user or project file outranks it.
-MANAGED_SETTINGS="$BCLAUDE_PATH/managed-settings.json"
+MANAGED_SETTINGS="$(realpath -m "${BCLAUDE_MANAGED_SETTINGS:-$BCLAUDE_PATH/managed-settings.json}")"
+[ -f "$MANAGED_SETTINGS" ] || die "managed settings not found: $MANAGED_SETTINGS"
 # The user's layer, as outside the sandbox. Resolved: symlinked into a dotfiles
 # repo, these must still fail the project checks below.
 USER_CLAUDE_DIR="$(realpath -m "$REAL_HOME/.claude")"
 USER_SETTINGS="$(realpath -m "$USER_CLAUDE_DIR/settings.json")"
-USER_CLAUDE_MD="$(realpath -m "$USER_CLAUDE_DIR/CLAUDE.md")"
+USER_CLAUDE_MD="$(realpath -m "${BCLAUDE_CLAUDE_MD:-$USER_CLAUDE_DIR/CLAUDE.md}")"
+# Absent, the default is shadowed with an empty file: a mistyped override must not be.
+if [ "${BCLAUDE_CLAUDE_MD:-}" ] && [ ! -f "$USER_CLAUDE_MD" ]; then
+    die "BCLAUDE_CLAUDE_MD not found: $USER_CLAUDE_MD"
+fi
 
 # Resolved on the HOST.
 export PATH="$HOME/.local/bin:$PATH"
@@ -43,22 +127,23 @@ CLAUDE_BIN_REAL="$(realpath "$CLAUDE_BIN")"
 if [ ! -f "$CLAUDE_BIN_REAL" ] || [ ! -x "$CLAUDE_BIN_REAL" ]; then
     die "not an executable file: $CLAUDE_BIN_REAL"
 fi
+if [ "$BCLAUDE_NVM" = 0 ]; then
+    # Bound alone, the binary would have neither its node nor its modules.
+    for path in "$CLAUDE_BIN_DIR" "$CLAUDE_BIN_REAL"; do
+        case "$path" in
+            "$REAL_HOME"/.nvm/*) die "BCLAUDE_NVM=0 leaves out ~/.nvm, where claude lives ($path)" ;;
+        esac
+    done
+fi
 
-# Canonical: a symlinked launch path would not exist inside the sandbox.
-PROJECT="$(realpath "$PWD")"
-# The project is bound writable on top of everything else, so a parent of the
-# real home would resolve $HOME back to your real files, and the sandbox home
-# would become a writable persistence channel. "/" never matches "$PROJECT"/*.
+# As the project, the sandbox home would be a writable persistence channel.
 case "$PROJECT" in
-    /)  die "refusing: / is not a project directory" ;;
     "$SANDBOX_HOME"|"$SANDBOX_HOME"/*)
         die "refusing: $PROJECT is inside the sandbox home ($SANDBOX_HOME)" ;;
     "$USER_CLAUDE_DIR"|"$USER_CLAUDE_DIR"/*)
         die "refusing: $PROJECT is your Claude config directory. Bro... WTF" ;;
 esac
 case "$REAL_HOME" in
-    "$PROJECT"|"$PROJECT"/*)
-        die "refusing: $PROJECT holds your real home directory" ;;
     # Bound over $HOME: your real home would be its own writable fake home.
     "$SANDBOX_HOME"|"$SANDBOX_HOME"/*)
         die "refusing: sandbox home $SANDBOX_HOME holds your real home" ;;
@@ -71,6 +156,19 @@ for path in "$USER_CLAUDE_DIR" "$USER_SETTINGS" "$USER_CLAUDE_MD"; do
             die "refusing: $PROJECT holds your Claude config ($path)" ;;
     esac
 done
+# What the options repoint must sit where no session writes. The sandbox home
+# is writable at $HOME; the default CLAUDE.md is exempt, it may be its own bind.
+for path in "$MANAGED_SETTINGS" "$CONFIG_DIR" "$CONFIG" ${BCLAUDE_CLAUDE_MD:+"$USER_CLAUDE_MD"}; do
+    case "$path" in
+        "$SANDBOX_HOME"|"$SANDBOX_HOME"/*)
+            die "refusing: $path is inside the sandbox home ($SANDBOX_HOME)" ;;
+    esac
+done
+# Under the repo it is masked below, or dev mode says so out loud.
+case "$MANAGED_SETTINGS" in
+    "$BCLAUDE_PATH"/*) ;;
+    "$PROJECT"/*) die "refusing: $PROJECT holds the managed settings ($MANAGED_SETTINGS)" ;;
+esac
 
 # Host copy for the unsandboxed VS Code extension; inside, the ro-bind shadows
 # it. Written in place, never unlinked: a new inode detaches live sessions' bind.
@@ -186,19 +284,42 @@ if [ "${CLAUDE_CONFIG_DIR+set}" ]; then
     ENV_ARGS+=(--setenv CLAUDE_CONFIG_DIR "$HOME/.claude")
 fi
 
-# ~/.local/bin on PATH only when bound from the host: unbound, it is a
-# writable directory in the persistent home that later sessions resolve through.
+# Optional read-only binds from the real home. Sources resolve on the HOST.
+HOST_ARGS=()
 LOCAL_BIN=
-[ ! -d "$REAL_HOME/.local/bin" ] || LOCAL_BIN="$HOME/.local/bin:"
-# Same rule for pnpm's bin dir. Last: its global-package shims must not shadow /usr.
 PNPM_BIN=
-[ ! -d "$REAL_HOME/.local/share/pnpm/bin" ] || PNPM_BIN=":$HOME/.local/share/pnpm/bin"
-# The binary's dir on PATH only under nvm, where the node its shebang needs sits
-# beside it: elsewhere (~/.vscode-server) its mount point is a writable dir in $HOME.
 BIN_PATH=
-case "$CLAUDE_BIN_DIR" in
-    "$REAL_HOME"/.nvm/*) BIN_PATH="$CLAUDE_BIN_DIR:" ;;
-esac
+# Shadowed when not bound, like settings.json below: creatable in the persistent
+# home, a planted core.fsmonitor, pager or alias would run in later sessions.
+for file in .gitconfig .config/git/config; do
+    if [ "$BCLAUDE_GITCONFIG" = 1 ] && [ -f "$REAL_HOME/$file" ]; then
+        HOST_ARGS+=(--ro-bind "$REAL_HOME/$file" "$HOME/$file")
+    else
+        exec {fd}</dev/null
+        HOST_ARGS+=(--ro-bind-data "$fd" "$HOME/$file")
+    fi
+done
+if [ "$BCLAUDE_LOCAL_BIN" = 1 ]; then
+    HOST_ARGS+=(--ro-bind-try "$REAL_HOME/.local/bin" "$HOME/.local/bin")
+    # On PATH only when bound from the host: unbound, it is a writable directory
+    # in the persistent home that later sessions resolve through.
+    [ ! -d "$REAL_HOME/.local/bin" ] || LOCAL_BIN="$HOME/.local/bin:"
+fi
+if [ "$BCLAUDE_PNPM" = 1 ]; then
+    # All of PNPM_HOME: bin/ only holds shims into global/. Never writable, it
+    # holds the store every host project links from.
+    HOST_ARGS+=(--ro-bind-try "$REAL_HOME/.local/share/pnpm" "$HOME/.local/share/pnpm")
+    # Same rule as above. Last: its global-package shims must not shadow /usr.
+    [ ! -d "$REAL_HOME/.local/share/pnpm/bin" ] || PNPM_BIN=":$HOME/.local/share/pnpm/bin"
+fi
+if [ "$BCLAUDE_NVM" = 1 ]; then
+    HOST_ARGS+=(--ro-bind-try "$REAL_HOME/.nvm" "$HOME/.nvm")
+    # The binary's dir on PATH only under nvm, where the node its shebang needs sits
+    # beside it: elsewhere (~/.vscode-server) its mount point is a writable dir in $HOME.
+    case "$CLAUDE_BIN_DIR" in
+        "$REAL_HOME"/.nvm/*) BIN_PATH="$CLAUDE_BIN_DIR:" ;;
+    esac
+fi
 
 # Mount order matters: later binds stack over earlier ones, which is why the
 # project and the masks come last.
@@ -250,21 +371,15 @@ BWRAP_ARGS=(
     --ro-bind-try /etc/ld.so.cache /etc/ld.so.cache
     --proc /proc
     --dev /dev
-    # tmpfs is RAM: cap /tmp at 2 GiB (--size takes bytes).
-    --size 2147483648 --tmpfs /tmp
-    --size 2147483648 --tmpfs /var/tmp
+    # tmpfs is RAM: capped, 2 GiB each by default.
+    --size "$BCLAUDE_TMP_SIZE" --tmpfs /tmp
+    --size "$BCLAUDE_TMP_SIZE" --tmpfs /var/tmp
 
     # The sandbox's own persistent home: ~/.claude.json (OAuth, trust) survives.
     --bind "$SANDBOX_HOME" "$HOME"
-    # Sources resolve on the HOST: these read your real home and land inside.
-    --ro-bind-try "$REAL_HOME/.gitconfig" "$HOME/.gitconfig"
-    --ro-bind-try "$REAL_HOME/.config/git/config" "$HOME/.config/git/config"
-    --ro-bind-try "$REAL_HOME/.local/bin" "$HOME/.local/bin"
+    "${HOST_ARGS[@]}"
+    # Sources resolve on the HOST: this reads your real home and lands inside.
     --ro-bind-try "$REAL_HOME/.local/share/claude" "$HOME/.local/share/claude"
-    # All of PNPM_HOME: bin/ only holds shims into global/. Never writable, it
-    # holds the store every host project links from.
-    --ro-bind-try "$REAL_HOME/.local/share/pnpm" "$HOME/.local/share/pnpm"
-    --ro-bind-try "$REAL_HOME/.nvm" "$HOME/.nvm"
     # The binary alone, never its directory.
     --ro-bind "$CLAUDE_BIN_REAL" "$CLAUDE_BIN_REAL"
     # Managed settings are the TOP of the precedence chain: a writable project
@@ -278,19 +393,28 @@ BWRAP_ARGS=(
 if [ -f "$USER_SETTINGS" ]; then
     BWRAP_ARGS+=(--ro-bind "$USER_SETTINGS" "$HOME/.claude/settings.json")
 else
-    exec 5<<<'{}'
-    BWRAP_ARGS+=(--ro-bind-data 5 "$HOME/.claude/settings.json")
+    exec {fd}<<<'{}'
+    BWRAP_ARGS+=(--ro-bind-data "$fd" "$HOME/.claude/settings.json")
 fi
 if [ -f "$USER_CLAUDE_MD" ]; then
     BWRAP_ARGS+=(--ro-bind "$USER_CLAUDE_MD" "$HOME/.claude/CLAUDE.md")
 else
-    exec 6</dev/null
-    BWRAP_ARGS+=(--ro-bind-data 6 "$HOME/.claude/CLAUDE.md")
+    exec {fd}</dev/null
+    BWRAP_ARGS+=(--ro-bind-data "$fd" "$HOME/.claude/CLAUDE.md")
 fi
 # Never bound from the host: a local override of settings.json is the same
 # persistence channel, so it is always the empty object.
-exec 4<<<'{}'
-BWRAP_ARGS+=(--ro-bind-data 4 "$HOME/.claude/settings.local.json")
+exec {fd}<<<'{}'
+BWRAP_ARGS+=(--ro-bind-data "$fd" "$HOME/.claude/settings.local.json")
+
+# Same attack via shell rc files sourced by later shell snapshots: a read-only
+# empty mount point, so rm-and-replace fails too. One fd each, bwrap closes it
+# after reading. Not a bind of /dev/null: binds are nodev, so a device node
+# there is unopenable and breaks sourcing.
+for file in .bashrc .bash_profile .profile; do
+    exec {fd}</dev/null
+    BWRAP_ARGS+=(--ro-bind-data "$fd" "$HOME/$file")
+done
 
 BWRAP_ARGS+=(
     # Anti-persistence: empty tmpfs so a session can't plant anything that
@@ -304,13 +428,6 @@ BWRAP_ARGS+=(
     --size 1048576 --tmpfs "$HOME/.claude/output-styles"
     --size 1048576 --tmpfs "$HOME/.claude/workflows"
     --size 1048576 --tmpfs "$HOME/.claude/themes"
-    # Same attack via shell rc files sourced by later shell snapshots: a
-    # read-only empty mount point, so rm-and-replace fails too. One fd each,
-    # bwrap closes it after reading. Not a bind of /dev/null: binds are nodev,
-    # so a device node there is unopenable and breaks sourcing.
-    --ro-bind-data 7 "$HOME/.bashrc"
-    --ro-bind-data 8 "$HOME/.bash_profile"
-    --ro-bind-data 9 "$HOME/.profile"
 
     # The project: the only genuinely writable place. Then the masks (see top).
     --bind "$PROJECT" "$PROJECT"
@@ -322,6 +439,6 @@ BWRAP_ARGS+=(
 # before --clearenv: a claude prompt quoting ${GITHUB_TOKEN} would leak it and a
 # bind path containing `$` would reshape the mount layout. Needs systemd 254+.
 exec systemd-run --user --scope -q --expand-environment=no \
-    -p MemoryMax=8G -p TasksMax=1024 -p CPUWeight=25 \
-    bwrap "${BWRAP_ARGS[@]}" "$CLAUDE_BIN_REAL" "$@" \
-    7</dev/null 8</dev/null 9</dev/null
+    -p MemoryMax="$BCLAUDE_MEMORY_MAX" -p TasksMax="$BCLAUDE_TASKS_MAX" \
+    -p CPUWeight="$BCLAUDE_CPU_WEIGHT" \
+    bwrap "${BWRAP_ARGS[@]}" "$CLAUDE_BIN_REAL" "$@"

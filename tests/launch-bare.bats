@@ -14,6 +14,9 @@ setup_file() {
 @test "settings.json shadow read-only" { is bare w_settings no; }
 @test "CLAUDE.md shadowed empty" { is bare claude_md ''; }
 @test "CLAUDE.md shadow read-only" { is bare w_claude_md no; }
+@test ".gitconfig shadowed empty" { is bare gitconfig ''; }
+@test ".gitconfig shadow read-only" { is bare w_gitconfig no; }
+@test "~/.config/git/config shadow read-only" { is bare w_gitconfig_xdg no; }
 @test "host: sandbox home copy of settings.json is {}" {
     [ "$(cat "$SH/.claude/settings.json")" = '{}' ]
 }

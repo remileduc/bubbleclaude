@@ -8,6 +8,7 @@ writable location is the directory you launch from.
 
 - [Requirements](#requirements)
 - [Usage](#usage)
+- [Options](#options)
 - [VS Code (Linux and WSL)](#vs-code-linux-and-wsl)
 - [How it works](#how-it-works)
 - [Known gaps](#known-gaps)
@@ -33,18 +34,13 @@ cd ~/work/myproject && bclaude [claude args...]
 ```
 
 The launch directory is the project: bound writable at its real path, the only
-writable place inside, one project per session. Arguments go straight to
-`claude`. Two overrides:
-
-```sh
-SANDBOX_HOME=/path/home bclaude     # fake home (default: <repo>/claude-home)
-CLAUDE_BIN=/path/to/claude bclaude  # this binary instead of the one on PATH
-```
+writable place inside, one project per session. Every argument goes straight
+to `claude`; the script's own [options](#options) are variables.
 
 Refused as launch directory: `/`, your home or a parent of it, the sandbox home
-or anything under it, and anything holding your real `~/.claude` (symlinks
-resolved). Bound as the project, they would hand the session your real files or
-its own state.
+or anything under it, and anything holding your real `~/.claude` or
+`~/.config/bclaude` (symlinks resolved). Bound as the project, they would hand
+the session your real files, its own state or its own next launch.
 
 `claude update` runs on the host before each launch, the sandbox being
 read-only where the updater writes. `DISABLE_AUTOUPDATER=1` skips it.
@@ -59,6 +55,61 @@ network allowlist for every later run. The script prints an uppercase warning;
 read every diff before you relaunch. `claude-home/` stays read-only from the
 project side even then. Launching from a parent of the repo is safe: the repo
 is remounted read-only.
+
+Options
+-------
+
+`bclaude.sh` has no flags of its own. Its options are variables, read from the
+environment for one run and from `~/.config/bclaude/config` (or
+`$XDG_CONFIG_HOME/bclaude/config`) to keep them. The environment wins.
+
+| Variable                   | Default                         | Sets                           |
+|----------------------------|---------------------------------|--------------------------------|
+| `SANDBOX_HOME`             | `<repo>/claude-home`            | The fake home                  |
+| `CLAUDE_BIN`               | `claude` on `PATH`              | The binary to run              |
+| `DISABLE_AUTOUPDATER`      | unset                           | `1`: no host `claude update`   |
+| `BCLAUDE_MANAGED_SETTINGS` | `<repo>/managed-settings.json`  | The policy file                |
+| `BCLAUDE_CLAUDE_MD`        | `~/.claude/CLAUDE.md`           | The global instructions        |
+| `BCLAUDE_MEMORY_MAX`       | `8G`                            | systemd `MemoryMax`            |
+| `BCLAUDE_TASKS_MAX`        | `1024`                          | systemd `TasksMax`             |
+| `BCLAUDE_CPU_WEIGHT`       | `25`                            | systemd `CPUWeight`            |
+| `BCLAUDE_TMP_SIZE`         | `2147483648`                    | `/tmp`, `/var/tmp`: bytes each |
+| `BCLAUDE_GITCONFIG`        | `1`                             | `0`: no `~/.gitconfig`         |
+| `BCLAUDE_LOCAL_BIN`        | `1`                             | `0`: no `~/.local/bin`         |
+| `BCLAUDE_NVM`              | `1`                             | `0`: no `~/.nvm`               |
+| `BCLAUDE_PNPM`             | `1`                             | `0`: no `~/.local/share/pnpm`  |
+
+```sh
+BCLAUDE_PNPM=0 bclaude                               # one run
+mkdir -p ~/.config/bclaude
+cp examples/bclaude.conf ~/.config/bclaude/config    # every run
+```
+
+The file is bash, sourced on the host before anything is mounted, so options
+can depend on the project:
+
+```sh
+case "$PROJECT" in
+    "$REAL_HOME"/work/*)
+        BCLAUDE_MANAGED_SETTINGS="$REAL_HOME/.config/bclaude/work-policy.json"
+        BCLAUDE_MEMORY_MAX=16G ;;
+    "$REAL_HOME"/src/third-party/*)
+        BCLAUDE_GITCONFIG=0 BCLAUDE_LOCAL_BIN=0 BCLAUDE_PNPM=0 ;;
+esac
+```
+
+[`examples/bclaude.conf`](examples/bclaude.conf) lists every option with its
+default and a longer per-project example. Under VS Code the file is the place
+for them: the wrapper has no arguments of its own and rarely sees your shell's
+environment.
+
+There is deliberately no per-project file inside the project: the project is
+the one place a session writes, and a cloned repository could ship one. For
+the same reason the launch is refused when the config file, the policy file or
+a `BCLAUDE_CLAUDE_MD` override sits under the project or the sandbox home. A
+replacement policy file is not checked: copy the shipped one and keep its
+`sandbox` block, or the session runs with no inner sandbox and no network
+allowlist. `BCLAUDE_NVM=0` is refused when `claude` itself lives under `~/.nvm`.
 
 VS Code (Linux and WSL)
 -----------------------
@@ -148,7 +199,7 @@ How it works
 | `bclaude-vscode.sh`     | VS Code entry point: argv[1] becomes `CLAUDE_BIN`, no update    |
 | `claude-home/`          | Bound over `$HOME`; the only persistent state                   |
 | `managed-settings.json` | Policy only, bound read-only as top-precedence managed settings |
-| `examples/`             | Hints for your own `~/.claude/settings.json` and `CLAUDE.md`    |
+| `examples/`             | Hints for your own `~/.claude/` and `~/.config/bclaude/config`  |
 
 Inside the sandbox:
 
@@ -156,11 +207,14 @@ Inside the sandbox:
   `/var/tmp` as 2 GiB tmpfs.
 - **Read-only from your real home:** `~/.claude/settings.json` and `CLAUDE.md`
   (the same preferences and instructions as outside; shadowed by an empty file
-  when absent, so a session cannot create them), `~/.gitconfig`, `~/.local/bin`,
+  when absent, so a session cannot create them), `~/.gitconfig` and
+  `~/.config/git/config` (shadowed the same way, also when left out, so
+  `git config --global` fails inside), `~/.local/bin`,
   `~/.local/share/claude`, `~/.local/share/pnpm` (the pnpm install, its global
   packages and its store, so every package your host projects use is readable),
   `~/.nvm` and the `claude` binary. Not the rest of `~/.local`, which holds
-  keyrings and app data.
+  keyrings and app data. Four of them can be left out, see
+  [Options](#options).
 - **Read-only system:** `/usr` and a minimal `/etc` (DNS, TLS certificates,
   passwd/group, timezone, alternatives, `ld.so` cache). Anything else a tool
   expects under `/etc` is absent; Debian's OpenJDK, for one, wants
@@ -186,7 +240,7 @@ Inside the sandbox:
   unsandboxed. Inside, git reads fine and every write (`add`, `commit`,
   `stash`, branches, `remote add`) fails loudly: do that from the host.
 - **Resources:** a systemd scope with `MemoryMax=8G`, `TasksMax=1024` and
-  `CPUWeight=25`. Raise them in the script if needed. The scope is started
+  `CPUWeight=25`, each an [option](#options). The scope is started
   with `--expand-environment=no`: since systemd 258 `systemd-run` otherwise
   fills `${VAR}` in its arguments, a prompt or a path, from the host
   environment before `--clearenv` runs.
